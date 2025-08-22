@@ -1,0 +1,80 @@
+# ----------------------
+# Composer
+# ----------------------
+/vendor/
+composer.lock
+
+# ----------------------
+# PHPUnit / Pest
+# ----------------------
+.phpunit.result.cache
+.pest.cache
+coverage/
+coverage.xml
+.clover.xml
+.phpunit.cache
+
+# ----------------------
+# Logs & Debug
+# ----------------------
+*.log
+*.cache
+*.tmp
+*.swp
+*.bak
+
+# ----------------------
+# IDE / Editors
+# ----------------------
+# PhpStorm / JetBrains
+.idea/
+*.iml
+out/
+
+# VSCode
+.vscode/
+.history/
+
+# Sublime
+*.sublime-workspace
+*.sublime-project
+
+# ----------------------
+# OS Files
+# ----------------------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ----------------------
+# Tools
+# ----------------------
+.php-cs-fixer.cache
+.php_cs.cache
+.php_cs.dist
+.php-cs-fixer.dist.php
+pint.json
+phpstan.neon
+phpstan.neon.dist
+psalm.xml
+psalm.xml.dist
+infection.log
+infection.json
+infection.json.dist
+
+# ----------------------
+# Environment / Secrets
+# ----------------------
+.env
+.env.local
+.env.*.local
+
+# ----------------------
+# Build / Dist
+# ----------------------
+/build/
+/dist/
+/node_modules/
+/coverage-html/
+/.cache/

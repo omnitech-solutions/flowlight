@@ -1,0 +1,96 @@
+{
+    "name": "omnitech-solutions/flowlight",
+    "description": "Lightweight workflow orchestration library for PHP. Provides a clean, composable pattern for chaining actions into pipelines, handling success and failure consistently, and keeping business logic organized and testable. Highly inspired by Ruby’s LightService gem (https://github.com/adomokos/light-service).",
+    "type": "library",
+    "version": "dev-main",
+    "license": "MIT",
+    "keywords": [
+        "workflow",
+        "orchestration",
+        "actions",
+        "pipeline",
+        "service-object",
+        "lightservice",
+        "php"
+    ],
+    "authors": [
+        {
+            "name": "Desmond O'Leary",
+            "email": "doleary@gmail.com",
+            "homepage": "https://github.com/desoleary",
+            "role": "Maintainer"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "pestphp/pest": "^4",
+        "laravel/pint": "^1.24",
+        "squizlabs/php_codesniffer": "*",
+        "infection/infection": "^0.31.2",
+        "phpstan/phpstan": "^2.1",
+        "roave/security-advisories": "dev-latest"
+    },
+    "suggest": {
+        "ext-xdebug": "Enable code coverage and debugging",
+        "ext-pcov": "Faster code coverage as an alternative to Xdebug"
+    },
+    "autoload": {
+        "psr-4": {
+            "Flowlight\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Flowlight\\Tests\\": "tests/",
+            "Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "ci": "make ci",
+        "install:all": "make install",
+        "test": "make test",
+        "test:coverage": "make coverage",
+        "coverage:show": "make coverage-show",
+        "lint": "make lint",
+        "format": "make static-codestyle-fix",
+        "format:check": "make static-codestyle-check",
+        "analyse": "make static-phpstan",
+        "analyse:update-baseline": "make static-phpstan-update-baseline",
+        "clean": "make clean"
+    },
+    "scripts-descriptions": {
+        "ci": "Run lint + static analysis + tests + coverage (fail-fast via Makefile).",
+        "install:all": "Composer install via Makefile with dist + optimized autoloader.",
+        "test": "Run Pest tests (supports TEST=... env var).",
+        "test:coverage": "Run Pest with coverage (Xdebug/PCOV).",
+        "coverage:show": "Open the HTML coverage report if present.",
+        "lint": "Run Pint to fix style (paths via CS_PARAMS).",
+        "format": "Run Pint to write fixes (alias).",
+        "format:check": "Run Pint in check mode (no changes).",
+        "analyse": "Run PHPStan (params via PHPSTAN_PARAMS).",
+        "analyse:update-baseline": "Regenerate PHPStan baseline.",
+        "clean": "Remove caches and build artifacts."
+    },
+    "config": {
+        "preferred-install": "dist",
+        "sort-packages": true,
+        "allow-plugins": {
+            "composer/package-versions-deprecated": true,
+            "infection/extension-installer": true,
+            "pestphp/pest-plugin": true
+        }
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "0.1-dev"
+        }
+    },
+    "minimum-stability": "stable",
+    "support": {
+        "issues": "https://github.com/omnitech-solutions/flowlight/issues",
+        "source": "https://github.com/omnitech-solutions/flowlight"
+    }
+}

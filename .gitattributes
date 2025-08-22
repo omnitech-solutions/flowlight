@@ -1,0 +1,48 @@
+# ----------------------
+# Export Settings (Packagist / dist archives)
+# ----------------------
+
+# Core meta files (ignored in dist)
+.editorconfig          export-ignore
+.gitattributes         export-ignore
+.gitignore             export-ignore
+
+# Tooling & configs
+.php-cs-fixer.dist.php export-ignore
+/.php-cs-fixer.php     export-ignore
+/pint.json             export-ignore
+/phpstan-baseline.neon export-ignore
+/phpstan.neon          export-ignore
+/phpstan.neon.dist     export-ignore
+/phpunit.xml           export-ignore
+/phpunit.xml.dist      export-ignore
+/psalm.xml             export-ignore
+/psalm.xml.dist        export-ignore
+/psalm-baseline.xml    export-ignore
+/infection.json        export-ignore
+/infection.json.dist   export-ignore
+
+# Documentation & examples
+/docs/                 export-ignore
+
+# CI / infra
+/.github/              export-ignore
+/Dockerfile            export-ignore
+/Makefile              export-ignore
+/vendor-bin/           export-ignore
+
+# Tests & reports
+/tests/                export-ignore
+/coverage              export-ignore
+/coverage.xml          export-ignore
+
+# IDE/editor junk
+/.idea/                export-ignore
+/.vscode/              export-ignore
+
+# ----------------------
+# GitHub Linguist Tweaks
+# ----------------------
+
+# Mark tests as documentation so GitHub language stats focus on src/
+tests/* linguist-documentation
