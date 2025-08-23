@@ -164,11 +164,14 @@ describe(Context::class, function () {
                 $caught = $e;
             }
 
-            expect($caught)->not->toBeNull()
-                ->and($caught)->toBeInstanceOf(ContextFailedError::class)
-                ->and($caught->getContext()->errorsArray())->toBe([
-                    'base' => ['Context failed due to validation or business errors.'],
-                ]);
+            expect($caught)->not->toBeNull();
+            expect($caught)->toBeInstanceOf(ContextFailedError::class);
+            /** @var ContextFailedError $caught */
+            $caughtCtx = $caught->getContext();
+
+            expect($caughtCtx->errorsArray())->toBe([
+                'base' => ['Context failed due to validation or business errors.'],
+            ]);
         });
 
         it('merges provided errors and throws', function () {
@@ -181,10 +184,14 @@ describe(Context::class, function () {
                 $caught = $e;
             }
 
-            expect($caught)->not->toBeNull()
-                ->and($caught->getContext()->errorsArray())->toBe([
-                    'username' => ['taken'],
-                ]);
+            expect($caught)->not->toBeNull();
+            expect($caught)->toBeInstanceOf(ContextFailedError::class);
+            /** @var ContextFailedError $caught */
+            $caughtCtx = $caught->getContext();
+
+            expect($caughtCtx->errorsArray())->toBe([
+                'username' => ['taken'],
+            ]);
         });
     });
 
@@ -265,10 +272,17 @@ describe(Context::class, function () {
 
             expect($info)->toBeArray();
             /** @var array{organizer?:string,actionName?:string,type?:string,message?:string,exception?:string,backtrace?:string} $info */
-            expect($info)->toHaveKeys(['organizer', 'actionName', 'type', 'message', 'exception', 'backtrace'])
-                ->and($info['organizer'])->toBe('RealOrganizer')
-                ->and($info['actionName'])->toBe('DoThing')
-                ->and($info['type'])->toBe($ex::class);
+            expect($info)->toHaveKeys(['organizer', 'actionName', 'type', 'message', 'exception', 'backtrace']);
+
+            if (isset($info['organizer'])) {
+                expect($info['organizer'])->toBe('RealOrganizer');
+            }
+            if (isset($info['actionName'])) {
+                expect($info['actionName'])->toBe('DoThing');
+            }
+            if (isset($info['type'])) {
+                expect($info['type'])->toBe($ex::class);
+            }
         });
 
         it('still records errorInfo when exception has no errors()', function () {

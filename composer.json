@@ -60,19 +60,21 @@
         "format:check": "make static-codestyle-check",
         "analyse": "make static-phpstan",
         "analyse:update-baseline": "make static-phpstan-update-baseline",
+        "analyse:tests": "make static-phpstan-tests",
         "clean": "make clean"
     },
     "scripts-descriptions": {
-        "ci": "Run lint + static analysis + tests + coverage (fail-fast via Makefile).",
-        "install:all": "Composer install via Makefile with dist + optimized autoloader.",
+        "ci": "Run lint  static analysis  tests  coverage (fail-fast via Makefile).",
+        "install:all": "Composer install via Makefile with dist  optimized autoloader.",
         "test": "Run Pest tests (supports TEST=... env var).",
         "test:coverage": "Run Pest with coverage (Xdebug/PCOV).",
         "coverage:show": "Open the HTML coverage report if present.",
         "lint": "Run Pint to fix style (paths via CS_PARAMS).",
         "format": "Run Pint to write fixes (alias).",
         "format:check": "Run Pint in check mode (no changes).",
-        "analyse": "Run PHPStan (params via PHPSTAN_PARAMS).",
+        "analyse": "Run PHPStan against src (params via PHPSTAN_PARAMS).",
         "analyse:update-baseline": "Regenerate PHPStan baseline.",
+        "analyse:tests": "Run PHPStan against tests (params via PHPSTAN_TESTS_PARAMS).",
         "clean": "Remove caches and build artifacts."
     },
     "config": {

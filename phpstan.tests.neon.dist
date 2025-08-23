@@ -1,0 +1,15 @@
+parameters:
+  level: max
+  paths:
+    - tests
+
+  bootstrapFiles:
+    - tests/bootstrap-phpstan.php
+
+  checkUninitializedProperties: true
+  reportUnmatchedIgnoredErrors: true
+
+  excludePaths:
+    - vendor
+    - src
+    - tests/Pest.php

@@ -77,6 +77,13 @@ static-phpstan:
 		$(PHPSTAN) analyse $(PHPSTAN_PARAMS); \
 	fi
 
+static-phpstan-tests:
+	@if [ -z "$$(find tests -type f -name '*.php' 2>/dev/null)" ]; then \
+		echo "PHPStan (tests): no PHP files under tests/ — skipping."; \
+	else \
+		$(PHPSTAN) analyse -c phpstan.tests.neon.dist $(PHPSTAN_TESTS_PARAMS); \
+	fi
+
 static-phpstan-update-baseline:
 	$(MAKE) static-phpstan PHPSTAN_PARAMS="--generate-baseline"
 

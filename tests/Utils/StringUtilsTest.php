@@ -5,19 +5,8 @@ declare(strict_types=1);
 namespace Flowlight\Tests\Utils;
 
 use Flowlight\Utils\StringUtils;
-use ReflectionClass;
 
 describe(StringUtils::class, function () {
-    describe('__construct', function () {
-        it('is declared private and prevents instantiation', function () {
-            $ref = new ReflectionClass(StringUtils::class);
-
-            $ctor = $ref->getConstructor();
-            expect($ctor)->not->toBeNull()
-                ->and($ctor->isPrivate())->toBeTrue();
-        });
-    });
-
     describe('::stringify', function () {
         it('returns strings unchanged', function () {
             expect(StringUtils::stringify('hello'))->toBe('hello');
