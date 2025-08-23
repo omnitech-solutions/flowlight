@@ -23,15 +23,16 @@
     ],
     "require": {
         "php": "^8.3",
-        "ext-json": "*"
+        "ext-json": "*",
+        "illuminate/support": "^12.25"
     },
     "require-dev": {
-        "pestphp/pest": "^4",
-        "laravel/pint": "^1.24",
-        "squizlabs/php_codesniffer": "*",
         "infection/infection": "^0.31.2",
+        "laravel/pint": "^1.24",
+        "pestphp/pest": "^4",
         "phpstan/phpstan": "^2.1",
-        "roave/security-advisories": "dev-latest"
+        "roave/security-advisories": "dev-latest",
+        "squizlabs/php_codesniffer": "*"
     },
     "suggest": {
         "ext-xdebug": "Enable code coverage and debugging",

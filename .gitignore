@@ -56,7 +56,6 @@ Desktop.ini
 .php-cs-fixer.dist.php
 pint.json
 phpstan.neon
-phpstan.neon.dist
 psalm.xml
 psalm.xml.dist
 infection.log
