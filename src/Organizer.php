@@ -78,15 +78,18 @@ abstract class Organizer
      *
      * @param  array<int, callable(Context):void|string>  $steps
      */
+    // in src/Organizer.php, inside protected static function reduce(Context $ctx, array $steps): void
     protected static function reduce(Context $ctx, array $steps): void
     {
         foreach ($steps as $step) {
             if (\is_string($step)) {
                 $ctx->setCurrentAction($step);
                 /** @var class-string<Action> $step */
+                $label = $step;
                 $step::execute($ctx);
             } elseif (\is_callable($step)) {
                 $ctx->setCurrentAction(\is_object($step) ? $step::class : 'callable');
+                $label = $ctx->actionName() ?? 'callable';
                 $step($ctx);
             } else {
                 throw new \RuntimeException('Step is neither an Action class-string nor a callable(Context): void');
@@ -97,7 +100,6 @@ abstract class Organizer
                 break;
             }
 
-            $label = $ctx->actionName() ?? 'callable';
             $ctx->addSuccessfulAction($label);
         }
     }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Flowlight\Context;
 use Flowlight\Enums\ContextStatus;
+use Flowlight\ErrorInfo;
 use Flowlight\Exceptions\ContextFailedError;
 
 describe(Context::class, function () {
@@ -278,7 +279,8 @@ describe(Context::class, function () {
 
     describe('recordRaisedError', function () {
         it('merges errors from exceptions exposing ->errors() and stores errorInfo', function () {
-            $ex = new class('bad') extends Exception {
+            $ex = new class('bad') extends Exception
+            {
                 /** @return array<string, list<string>> */
                 public function errors(): array
                 {
@@ -329,10 +331,14 @@ describe(Context::class, function () {
             /** @var array<string, mixed> $info */
             expect($info)->toHaveKeys(['type', 'message', 'exception', 'backtrace']);
 
-            // Assert accessor is not null, then narrow type for PHPStan:
+            // Narrow type for PHPStan, then access properties
             $errorInfo = $ctx->errorInfo();
-            expect($errorInfo)->not->toBeNull()
-                ->and($errorInfo->type)->toBe($ex::class)
+            expect($errorInfo)->toBeInstanceOf(ErrorInfo::class);
+
+            /** @var ErrorInfo $errorInfo */
+            $errorInfo = $errorInfo;
+
+            expect($errorInfo->type)->toBe($ex::class)
                 ->and($errorInfo->message)->toBe('boom');
         });
     });
