@@ -249,6 +249,18 @@ final class Context
         return $this->status;
     }
 
+    /** True when not FAILED and there are no errors */
+    public function success(): bool
+    {
+        return ! $this->failure();
+    }
+
+    /** True when status is FAILED or there are any errors */
+    public function failure(): bool
+    {
+        return $this->status === ContextStatus::FAILED || $this->errors->isNotEmpty();
+    }
+
     // ── Array accessors ───────────────────────────────────────────────────────────
 
     /** @return array<string,mixed> */
@@ -351,6 +363,87 @@ final class Context
         $this->currentAction = $fqcn;
 
         return $this;
+    }
+
+    /**
+     * Record a successfully executed action class name (or label such as "callable").
+     */
+    public function addSuccessfulAction(string $actionClassName): self
+    {
+        /** @var array<int,string> $list */
+        $list = (array) ($this->internalOnly->get('successfulActions') ?? []);
+        $list[] = $actionClassName;
+        $this->internalOnly->put('successfulActions', array_values(array_unique($list)));
+
+        return $this;
+    }
+
+    /**
+     * Get the recorded list of successful actions.
+     *
+     * @return list<string>
+     */
+    public function successfulActions(): array
+    {
+        /** @var list<string> */
+        $list = (array) ($this->internalOnly->get('successfulActions') ?? []);
+
+        return $list;
+    }
+
+    /**
+     * Store a structured snapshot of the last failed context.
+     * The optional $label defaults to the current action name to aid traceability.
+     *
+     * @return $this
+     */
+    public function setLastFailedContext(Context $source, ?string $label = null): self
+    {
+        $this->internalOnly->put('lastFailedContext', [
+            'label' => $label ?? $source->actionName(),
+            'input' => $source->inputArray(),
+            'params' => $source->paramsArray(),
+            'meta' => $source->metaArray(),
+            'errors' => $source->errorsArray(),
+            'resource' => $source->resourceArray(),
+            'status' => $source->status()->name,
+        ]);
+
+        return $this;
+    }
+
+    /**
+     * Return the snapshot saved by setLastFailedContext(), if any.
+     *
+     * @return array{
+     *   label?: string,
+     *   input: array<string,mixed>,
+     *   params: array<string,mixed>,
+     *   meta: array<string,mixed>,
+     *   errors: array<string,mixed>,
+     *   resource: array<string,mixed>,
+     *   status: string
+     * }|null
+     */
+    public function lastFailedContext(): ?array
+    {
+        $value = $this->internalOnly->get('lastFailedContext');
+
+        if (\is_array($value)) {
+            /** @var array{
+             *   label?: string,
+             *   input: array<string,mixed>,
+             *   params: array<string,mixed>,
+             *   meta: array<string,mixed>,
+             *   errors: array<string,mixed>,
+             *   resource: array<string,mixed>,
+             *   status: string
+             * } $value
+             */
+            return $value;
+        }
+
+        return null;
     }
 
     public function organizerName(): ?string

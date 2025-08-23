@@ -233,6 +233,32 @@ describe(Context::class, function () {
         });
     });
 
+    describe('success() / failure()', function () {
+        it('fresh context is successful (no errors, not FAILED)', function () {
+            $ctx = Context::makeWithDefaults();
+            expect($ctx->success())->toBeTrue()
+                ->and($ctx->failure())->toBeFalse();
+        });
+
+        it('adding errors flips to failure()', function () {
+            $ctx = Context::makeWithDefaults()->withErrors(['f' => ['e']]);
+            expect($ctx->success())->toBeFalse()
+                ->and($ctx->failure())->toBeTrue();
+        });
+
+        it('markFailed() forces failure()', function () {
+            $ctx = Context::makeWithDefaults()->markFailed();
+            expect($ctx->success())->toBeFalse()
+                ->and($ctx->failure())->toBeTrue();
+        });
+
+        it('completed without errors remains success()', function () {
+            $ctx = Context::makeWithDefaults()->markComplete();
+            expect($ctx->success())->toBeTrue()
+                ->and($ctx->failure())->toBeFalse();
+        });
+    });
+
     describe('setCurrentOrganizer / setCurrentAction', function () {
         it('stores FQCNs and returns short names via organizerName/actionName', function () {
             $ctx = Context::makeWithDefaults()
@@ -345,6 +371,84 @@ describe(Context::class, function () {
                 ->and($meta->get('m'))->toBe(true)
                 ->and($extra)->toBeInstanceOf(\Illuminate\Support\Collection::class)
                 ->and($extra->get('min'))->toBe(3);
+        });
+    });
+
+    describe('successfulActions', function () {
+        it('defaults to empty, then appends with de-duplication and preserves order', function () {
+            $ctx = Context::makeWithDefaults();
+
+            expect($ctx->successfulActions())->toBe([]);
+
+            $ctx->addSuccessfulAction('A')
+                ->addSuccessfulAction('B')
+                ->addSuccessfulAction('A');
+
+            expect($ctx->successfulActions())->toBe(['A', 'B']);
+        });
+    });
+
+    describe('lastFailedContext snapshot', function () {
+        it('returns null when unset', function () {
+            $ctx = Context::makeWithDefaults();
+
+            expect($ctx->lastFailedContext())->toBeNull();
+        });
+
+        it('captures a full snapshot with default label = actionName()', function () {
+            $ctx = Context::makeWithDefaults(
+                ['in' => 1],
+                [
+                    'params' => ['p' => 2],
+                    'meta' => ['m' => 3],
+                    'resource' => ['r' => ['x' => true]],
+                ]
+            )
+                ->setCurrentAction('App\\Actions\\DoThing')
+                ->withErrors(['field' => ['bad']])
+                ->markFailed();
+
+            $ctx->setLastFailedContext($ctx);
+
+            $snap = $ctx->lastFailedContext();
+
+            expect($snap)->not->toBeNull();
+            /** @var array{
+             *   label?: string,
+             *   input: array<string,mixed>,
+             *   params: array<string,mixed>,
+             *   meta: array<string,mixed>,
+             *   errors: array<string,mixed>,
+             *   resource: array<string,mixed>,
+             *   status: string
+             * } $snap
+             */
+            expect($snap)->toHaveKeys(['input', 'params', 'meta', 'errors', 'resource', 'status'])
+                ->and($snap)->toHaveKey('label', 'DoThing')
+                ->and($snap['input'])->toBe(['in' => 1])
+                ->and($snap['params'])->toBe(['p' => 2])
+                ->and($snap['meta'])->toBe(['m' => 3])
+                ->and($snap['errors'])->toBe(['field' => ['bad']])
+                ->and($snap['resource'])->toBe(['r' => ['x' => true]])
+                ->and($snap['status'])->toBe('FAILED');
+        });
+
+        it('allows overriding the label', function () {
+            $ctx = Context::makeWithDefaults(['k' => 'v'])
+                ->setCurrentAction('App\\Actions\\IgnoredForCustomLabel')
+                ->withErrors(['base' => ['oops']])
+                ->markFailed();
+
+            $ctx->setLastFailedContext($ctx, 'CustomLabel');
+
+            $snap = $ctx->lastFailedContext();
+
+            expect($snap)
+                ->not->toBeNull()
+                ->toMatchArray([
+                    'label' => 'CustomLabel',
+                    'status' => 'FAILED',
+                ]);
         });
     });
 });
