@@ -24,7 +24,8 @@
     "require": {
         "php": "^8.3",
         "ext-json": "*",
-        "illuminate/support": "^12.25"
+        "illuminate/support": "^12.25",
+        "illuminate/validation": "^12.25"
     },
     "require-dev": {
         "infection/infection": "^0.31.2",

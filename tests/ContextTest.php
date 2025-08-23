@@ -278,8 +278,7 @@ describe(Context::class, function () {
 
     describe('recordRaisedError', function () {
         it('merges errors from exceptions exposing ->errors() and stores errorInfo', function () {
-            $ex = new class('bad') extends Exception
-            {
+            $ex = new class('bad') extends Exception {
                 /** @return array<string, list<string>> */
                 public function errors(): array
                 {
@@ -295,7 +294,6 @@ describe(Context::class, function () {
             expect($ctx->errorsArray())->toBe(['field' => ['oops']]);
 
             $info = $ctx->internalOnly()->get('errorInfo');
-
             expect($info)->toBeArray();
             /** @var array{organizer?:string,actionName?:string,type?:string,message?:string,exception?:string,backtrace?:string} $info */
             expect($info)->toHaveKeys(['organizer', 'actionName', 'type', 'message', 'exception', 'backtrace']);
@@ -309,6 +307,16 @@ describe(Context::class, function () {
             if (isset($info['type'])) {
                 expect($info['type'])->toBe($ex::class);
             }
+
+            // Assert accessor is not null, then narrow type for PHPStan:
+            $errorInfo = $ctx->errorInfo();
+            expect($errorInfo)->not->toBeNull();
+
+            /** @var \Flowlight\ErrorInfo $errorInfo */
+            $errorInfo = $errorInfo;
+
+            expect($errorInfo->type)->toBe($ex::class)
+                ->and($errorInfo->message)->toBe('bad');
         });
 
         it('still records errorInfo when exception has no errors()', function () {
@@ -317,10 +325,15 @@ describe(Context::class, function () {
             $ctx = Context::makeWithDefaults()->recordRaisedError($ex);
 
             $info = $ctx->internalOnly()->get('errorInfo');
-
             expect($info)->toBeArray();
             /** @var array<string, mixed> $info */
             expect($info)->toHaveKeys(['type', 'message', 'exception', 'backtrace']);
+
+            // Assert accessor is not null, then narrow type for PHPStan:
+            $errorInfo = $ctx->errorInfo();
+            expect($errorInfo)->not->toBeNull()
+                ->and($errorInfo->type)->toBe($ex::class)
+                ->and($errorInfo->message)->toBe('boom');
         });
     });
 

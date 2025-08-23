@@ -1,0 +1,13 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Cannot access property \$message on Flowlight\\ErrorInfo\|null\.$#'
+			identifier: property.nonObject
+			count: 1
+			path: tests/ContextTest.php
+
+		-
+			message: '#^Cannot access property \$type on Flowlight\\ErrorInfo\|null\.$#'
+			identifier: property.nonObject
+			count: 1
+			path: tests/ContextTest.php

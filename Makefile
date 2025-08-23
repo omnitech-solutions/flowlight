@@ -13,6 +13,7 @@ PHPSTAN       := ./vendor/bin/phpstan
 
 # ---- Params (override on CLI)
 TEST          ?=
+PHP_MEMORY_LIMIT ?= 2048M
 PHPSTAN_PARAMS?=
 CS_PARAMS     ?=
 
@@ -74,18 +75,21 @@ static-phpstan:
 	@if [ -z "$$(find src -type f -name '*.php' 2>/dev/null)" ]; then \
 		echo "PHPStan: no PHP files under src/ — skipping."; \
 	else \
-		$(PHPSTAN) analyse $(PHPSTAN_PARAMS); \
+		$(PHP) -d memory_limit=$(PHP_MEMORY_LIMIT) $(PHPSTAN) analyse $(PHPSTAN_PARAMS); \
 	fi
 
 static-phpstan-tests:
 	@if [ -z "$$(find tests -type f -name '*.php' 2>/dev/null)" ]; then \
 		echo "PHPStan (tests): no PHP files under tests/ — skipping."; \
 	else \
-		$(PHPSTAN) analyse -c phpstan.tests.neon.dist $(PHPSTAN_TESTS_PARAMS); \
+		$(PHP) -d memory_limit=$(PHP_MEMORY_LIMIT) $(PHPSTAN) analyse -c phpstan.tests.neon.dist $(PHPSTAN_TESTS_PARAMS); \
 	fi
 
 static-phpstan-update-baseline:
 	$(MAKE) static-phpstan PHPSTAN_PARAMS="--generate-baseline"
+
+static-phpstan-update-baseline-tests:
+	$(MAKE) static-phpstan-tests PHPSTAN_TESTS_PARAMS="--generate-baseline"
 
 static-codestyle-fix:
 	$(PINT) $(CS_PARAMS)

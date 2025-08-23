@@ -23,6 +23,9 @@ use function is_array;
  */
 final class Context
 {
+    /** Captured ErrorInfo for the last raised exception (if any) */
+    private ?ErrorInfo $errorInfo = null;
+
     /** @var Collection<string, mixed> Arbitrary inputs passed into the pipeline */
     private Collection $input;
 
@@ -446,6 +449,11 @@ final class Context
         return null;
     }
 
+    public function errorInfo(): ?ErrorInfo
+    {
+        return $this->errorInfo;
+    }
+
     public function organizerName(): ?string
     {
         return $this->currentOrganizer ? self::shortName($this->currentOrganizer) : null;
@@ -473,20 +481,26 @@ final class Context
      */
     public function recordRaisedError(Throwable $exception): self
     {
+        // Capture structured error info immediately
+        $this->errorInfo = new ErrorInfo($exception);
+
+        // If the exception exposes structured errors, merge them into Context
         if (\method_exists($exception, 'errors')) {
             /** @var mixed $errs */
             $errs = $exception->errors();
-            $this->withErrors($errs); // accepts mixed and normalizes
+            $this->withErrors($errs);
         }
 
-        $this->internalOnly->put('errorInfo', [
-            'organizer' => $this->organizerName(),
-            'actionName' => $this->actionName(),
-            'type' => $exception::class,
-            'message' => $exception->getMessage(),
-            'exception' => (string) $exception,
-            'backtrace' => $exception->getTraceAsString(),
-        ]);
+        // Store the summarized info into internalOnly
+        $summary = $this->errorInfo
+            ->toCollection()
+            ->merge([
+                'organizer' => $this->organizerName(),
+                'actionName' => $this->actionName(),
+            ])
+            ->all();
+
+        $this->internalOnly->put('errorInfo', $summary);
 
         return $this;
     }
