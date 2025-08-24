@@ -13,3 +13,4 @@ parameters:
     - vendor
     - src
     - tests/Pest.php
+    - tests/bootstrap.php

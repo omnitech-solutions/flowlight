@@ -3,9 +3,11 @@
 declare(strict_types=1);
 
 use Flowlight\Context;
+use Flowlight\Enums\ContextOperation;
 use Flowlight\Enums\ContextStatus;
 use Flowlight\ErrorInfo;
 use Flowlight\Exceptions\ContextFailedError;
+use Illuminate\Support\Collection;
 
 describe(Context::class, function () {
     describe('::makeWithDefaults', function () {
@@ -26,7 +28,7 @@ describe(Context::class, function () {
             expect($ctx->paramsArray())->toBe([])
                 ->and($ctx->errorsArray())->toBe([])
                 ->and($ctx->resourceArray())->toBe([])
-                ->and($ctx->metaArray())->toBe([])
+                ->and($ctx->metaArray())->toBe(['operation' => ContextOperation::UPDATE])
                 ->and($ctx->extraRulesArray())->toBe([])
                 ->and($ctx->internalOnlyArray())->toBe([]);
         });
@@ -41,10 +43,10 @@ describe(Context::class, function () {
                 ->and($ctx->internalOnlyArray())->toBe(['trace' => true]);
         });
 
-        it('can set invokedAction via overrides when object provided', function () {
+        it('cannot set invokedAction via overrides when object provided', function () {
             $action = new stdClass;
             $ctx = Context::makeWithDefaults([], ['invokedAction' => $action]);
-            expect($ctx->invokedAction)->toBe($action);
+            expect($ctx->invokedAction)->toBeNull();
         });
     });
 
@@ -68,6 +70,12 @@ describe(Context::class, function () {
     });
 
     describe('withErrors', function () {
+        it('marks context as failed', function () {
+            $ctx = Context::makeWithDefaults();
+            $ctx->withErrors(['email' => ['invalid']]);
+            expect($ctx->status())->toBe(ContextStatus::FAILED);
+        });
+
         it('merges and deduplicates errors per field while keeping order', function () {
             $ctx = Context::makeWithDefaults();
             $ctx->withErrors(['email' => ['invalid']]);
@@ -78,15 +86,15 @@ describe(Context::class, function () {
             ]);
         });
 
-        it('accepts scalars and normalizes to list of strings', function () {
+        it('accepts scalars', function () {
             $ctx = Context::makeWithDefaults();
 
             $ctx->withErrors(['age' => 0]);
             $ctx->withErrors(['active' => true]);
 
             expect($ctx->errorsArray())->toBe([
-                'age' => ['0'],
-                'active' => ['1'],
+                'age' => 0,
+                'active' => true,
             ]);
         });
 
@@ -111,14 +119,21 @@ describe(Context::class, function () {
         });
     });
 
-    describe('withMeta', function () {
-        it('merges meta values', function () {
-            $ctx = Context::makeWithDefaults()
-                ->withMeta(['x' => 1])
-                ->withMeta(['y' => 2]);
+    it('withMeta merges meta values', function () {
+        $ctx = Context::makeWithDefaults()->markUpdateOperation();
 
-            expect($ctx->metaArray())->toBe(['x' => 1, 'y' => 2]);
-        });
+        $ctx->withMeta(['a' => 1])->withMeta(['b' => 2]);
+
+        // enum-aware assertions
+        expect($ctx->operation())->toBe(ContextOperation::UPDATE)
+            ->and($ctx->meta()->get('operation'))->toBe(ContextOperation::UPDATE)
+            ->and($ctx->metaArray())->toMatchArray([
+                'a' => 1,
+                'b' => 2,
+                'operation' => ContextOperation::UPDATE,
+            ]);
+
+        // still merges the rest
     });
 
     describe('withInternalOnly', function () {
@@ -314,7 +329,7 @@ describe(Context::class, function () {
             $errorInfo = $ctx->errorInfo();
             expect($errorInfo)->not->toBeNull();
 
-            /** @var \Flowlight\ErrorInfo $errorInfo */
+            /** @var ErrorInfo $errorInfo */
             $errorInfo = $errorInfo;
 
             expect($errorInfo->type)->toBe($ex::class)
@@ -362,7 +377,7 @@ describe(Context::class, function () {
             $input = $ctx->input();
 
             expect($input->get('a'))->toBe(1)
-                ->and($input)->toBeInstanceOf(\Illuminate\Support\Collection::class);
+                ->and($input)->toBeInstanceOf(Collection::class);
         });
 
         it('exposes errors/params/resource/meta/extraRules via collection accessors', function () {
@@ -380,15 +395,15 @@ describe(Context::class, function () {
             $meta = $ctx->meta();
             $extra = $ctx->extraRules();
 
-            expect($errors)->toBeInstanceOf(\Illuminate\Support\Collection::class)
+            expect($errors)->toBeInstanceOf(Collection::class)
                 ->and($errors->get('e'))->toBe(['msg'])
-                ->and($params)->toBeInstanceOf(\Illuminate\Support\Collection::class)
+                ->and($params)->toBeInstanceOf(Collection::class)
                 ->and($params->get('p'))->toBe(1)
-                ->and($resource)->toBeInstanceOf(\Illuminate\Support\Collection::class)
+                ->and($resource)->toBeInstanceOf(Collection::class)
                 ->and($resource->get('r'))->toBe(['id' => 9])
-                ->and($meta)->toBeInstanceOf(\Illuminate\Support\Collection::class)
+                ->and($meta)->toBeInstanceOf(Collection::class)
                 ->and($meta->get('m'))->toBe(true)
-                ->and($extra)->toBeInstanceOf(\Illuminate\Support\Collection::class)
+                ->and($extra)->toBeInstanceOf(Collection::class)
                 ->and($extra->get('min'))->toBe(3);
         });
     });
@@ -467,6 +482,39 @@ describe(Context::class, function () {
                 ->toMatchArray([
                     'label' => 'CustomLabel',
                     'status' => 'FAILED',
+                ]);
+        });
+    });
+
+    describe('operation helpers', function () {
+        it('defaults to UPDATE on new contexts', function () {
+            $ctx = Context::makeWithDefaults(); // ctor marks UPDATE by default
+            expect($ctx->operation())->toBe(ContextOperation::UPDATE)
+                ->and($ctx->meta()->get('operation'))->toBe(ContextOperation::UPDATE);
+        });
+
+        it('markCreateOperation switches to CREATE', function () {
+            $ctx = Context::makeWithDefaults()->markCreateOperation();
+            expect($ctx->operation())->toBe(ContextOperation::CREATE)
+                ->and($ctx->createOperation())->toBeTrue()
+                ->and($ctx->updateOperation())->toBeFalse();
+        });
+
+        it('markUpdateOperation switches to UPDATE', function () {
+            $ctx = Context::makeWithDefaults()->markCreateOperation()->markUpdateOperation();
+            expect($ctx->operation())->toBe(ContextOperation::UPDATE)
+                ->and($ctx->updateOperation())->toBeTrue()
+                ->and($ctx->createOperation())->toBeFalse();
+        });
+
+        it('withMeta merges alongside operation without coercing to string', function () {
+            $ctx = Context::makeWithDefaults()->markUpdateOperation();
+            $ctx->withMeta(['foo' => 'bar']);
+
+            expect($ctx->operation())->toBe(ContextOperation::UPDATE)
+                ->and($ctx->metaArray())->toMatchArray([
+                    'foo' => 'bar',
+                    'operation' => ContextOperation::UPDATE,
                 ]);
         });
     });

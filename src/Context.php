@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Flowlight;
 
+use Flowlight\Enums\ContextOperation;
 use Flowlight\Enums\ContextStatus;
 use Flowlight\Exceptions\ContextFailedError;
-use Flowlight\Utils\StringUtils;
 use Illuminate\Support\Collection;
 use Throwable;
 use Traversable;
@@ -70,6 +70,7 @@ final class Context
         $this->extraRules = collect();
         $this->internalOnly = collect();
         $this->status = ContextStatus::INCOMPLETE;
+        $this->markUpdateOperation();
     }
 
     /**
@@ -77,9 +78,6 @@ final class Context
      *
      * @param  array<string,mixed>  $input
      * @param  array<string,mixed>  $overrides  keys: params, errors, resource, extraRules, internalOnly, meta, invokedAction
-     *
-     * @example
-     * $ctx = Context::makeWithDefaults(['id' => 1], ['params' => ['x' => 5]]);
      */
     public static function makeWithDefaults(array $input = [], array $overrides = []): self
     {
@@ -101,95 +99,74 @@ final class Context
             }
         }
 
-        if (\array_key_exists('invokedAction', $overrides) && \is_object($overrides['invokedAction'])) {
-            $ctx->invokedAction = $overrides['invokedAction'];
-        }
-
         return $ctx;
     }
 
     // ── Mutators (fluent) ─────────────────────────────────────────────────────────
 
     /**
-     * Merge additional input values.
+     * Merge additional input values (shallow).
      *
      * @param  array<string,mixed>|Collection<string,mixed>  $values
      */
     public function withInputs(array|Collection $values): self
     {
-        $this->input = $this->input->merge(self::toCollection($values));
-
-        return $this;
+        return $this->addAttrsToContext('input', $values);
     }
 
     /**
-     * Merge additional parameters.
+     * Merge additional parameters (shallow).
      *
      * @param  array<string,mixed>|Collection<string,mixed>  $values
      */
     public function withParams(array|Collection $values): self
     {
-        $this->params = $this->params->merge(self::toCollection($values));
-
-        return $this;
+        return $this->addAttrsToContext('params', $values);
     }
 
     /**
-     * Merge validation or business errors.
-     *
-     * Accepts anything and normalizes messages per field to an array of strings,
-     * deduplicated while preserving first-seen order.
+     * Merge validation or business errors (shallow).
+     * Accepts arrays/collections keyed by field; values may be scalars or arrays.
      */
     public function withErrors(mixed $errors): self
     {
-        $incoming = self::toCollection($errors);
-
-        foreach ($incoming as $field => $messages) {
-            $key = (string) $field;
-            $list = is_array($messages) ? array_values($messages) : [$messages];
-
-            $existing = (array) ($this->errors->get($key) ?? []);
-
-            /** @var list<string> $merged */
-            $merged = array_values(array_unique(
-                array_map(static fn ($m): string => StringUtils::stringify($m), array_merge($existing, $list))
-            ));
-
-            $this->errors->put($key, $merged);
+        if (empty($errors)) {
+            return $this;
         }
+
+        /** @var Collection<string,mixed> $errors */
+        $errors = self::toCollection($errors);
+        $this->addAttrsToContext('errors', self::toCollection($errors));
+
+        $this->markFailed();
 
         return $this;
     }
 
     /**
-     * Merge metadata.
+     * Merge metadata (shallow).
      *
      * @param  array<string,mixed>|Collection<string,mixed>  $values
      */
     public function withMeta(array|Collection $values): self
     {
-        $this->meta = $this->meta->merge(self::toCollection($values));
-
-        return $this;
+        return $this->addAttrsToContext('meta', $values);
     }
 
     /**
-     * Merge internal-only data.
+     * Merge internal-only data (shallow).
      *
      * @param  array<string,mixed>|Collection<string,mixed>  $values
      */
     public function withInternalOnly(array|Collection $values): self
     {
-        $this->internalOnly = $this->internalOnly->merge(self::toCollection($values));
-
-        return $this;
+        return $this->addAttrsToContext('internalOnly', $values);
     }
 
     /**
      * Add errors and abort execution.
      *
      * If no incoming errors and current errors are empty, attaches $message under "base".
-     *
      *
      * @throws ContextFailedError
      */
@@ -198,11 +175,11 @@ final class Context
         $incoming = self::toCollection($errors);
 
         if ($incoming->isNotEmpty()) {
-            $this->withErrors($incoming);
+            $this->addAttrsToContext('errors', $incoming);
         }
 
         if ($incoming->isEmpty() && $this->errors->isEmpty()) {
-            $this->errors->put('base', [$message]);
+            $this->addAttrsToContext('errors', ['base' => [$message]]);
         }
 
         $this->failAndAbort($message);
@@ -475,23 +452,50 @@ final class Context
         return $json;
     }
 
+    // ---------------------------------------------------------------------
+    // Operation helpers (stored in meta['operation'])
+    // ---------------------------------------------------------------------
+
+    public function markCreateOperation(): self
+    {
+        return $this->withMeta(['operation' => ContextOperation::CREATE]);
+    }
+
+    public function markUpdateOperation(): self
+    {
+        return $this->withMeta(['operation' => ContextOperation::UPDATE]);
+    }
+
+    public function createOperation(): bool
+    {
+        return $this->operation() === ContextOperation::CREATE;
+    }
+
+    public function updateOperation(): bool
+    {
+        return $this->operation() === ContextOperation::UPDATE;
+    }
+
+    public function operation(): ContextOperation
+    {
+        /** @var ContextOperation */
+        return $this->meta()->get('operation');
+    }
+
     /**
      * Capture a raised exception, merge its errors if available,
      * and record structured error info in `internalOnly`.
      */
     public function recordRaisedError(Throwable $exception): self
     {
-        // Capture structured error info immediately
         $this->errorInfo = new ErrorInfo($exception);
 
-        // If the exception exposes structured errors, merge them into Context
         if (\method_exists($exception, 'errors')) {
             /** @var mixed $errs */
             $errs = $exception->errors();
             $this->withErrors($errs);
         }
 
-        // Store the summarized info into internalOnly
         $summary = $this->errorInfo
             ->toCollection()
             ->merge([
@@ -543,5 +547,26 @@ final class Context
         $pos = strrpos($fqcn, '\\');
 
         return $pos === false ? $fqcn : substr($fqcn, $pos + 1);
+    }
+
+    /**
+     * Shallow-merge attributes into one of the context collections.
+     *
+     * @param  'input'|'params'|'errors'|'meta'|'internalOnly'  $target
+     * @param  array<string,mixed>|Collection<string,mixed>  $attrs
+     */
+    private function addAttrsToContext(string $target, array|Collection $attrs): self
+    {
+        $incoming = self::toCollection($attrs);
+
+        if ($incoming->isEmpty()) {
+            return $this;
+        }
+
+        /** @var Collection<string,mixed> $current */
+        $current = $this->{$target};
+        $this->{$target} = $current->merge($incoming);
+
+        return $this;
     }
 }
