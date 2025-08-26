@@ -6,7 +6,6 @@ namespace Flowlight;
 
 use Flowlight\Enums\ContextOperation;
 use Flowlight\Enums\ContextStatus;
-use Flowlight\Exceptions\ContextFailedError;
 use Illuminate\Support\Collection;
 use Throwable;
 use Traversable;
@@ -14,50 +13,50 @@ use Traversable;
 use function is_array;
 
 /**
- * Context — the execution container for Flowlight pipelines.
- *
- * Holds inputs, params, errors, resources, and metadata as Collections.
- * Designed for clarity and fluent composition.
- *
- * Inspired by LightService (Ruby).
+ * Context — execution container for Flowlight pipelines.
  */
 final class Context
 {
-    /** Captured ErrorInfo for the last raised exception (if any) */
+    /** Captured ErrorInfo for the last raised exception (if any). */
     private ?ErrorInfo $errorInfo = null;
 
-    /** @var Collection<string, mixed> Arbitrary inputs passed into the pipeline */
+    /** @var Collection<string, mixed> Arbitrary inputs passed into the pipeline. */
     private Collection $input;
 
-    /** @var Collection<string, mixed> Validation / business errors (values are arrays or scalars) */
+    /**
+     * @var Collection<string, mixed> Validation/business errors keyed by attribute or domain key.
+     */
     private Collection $errors;
 
-    /** @var Collection<string, mixed> Additional params */
+    /** @var Collection<string, mixed> Additional parameters. */
     private Collection $params;
 
-    /** @var Collection<string, mixed> Arbitrary resources (objects, arrays, etc.) */
-    private Collection $resource;
+    /** @var Collection<string, mixed> Arbitrary resources (objects, arrays, DTOs). */
+    private Collection $resources;
 
-    /** @var Collection<string, mixed> Arbitrary metadata */
+    /** @var Collection<string, mixed> Arbitrary metadata (e.g., operation). */
     private Collection $meta;
 
-    /** @var Collection<string, mixed> Extra rules (domain-specific) */
+    /** @var Collection<string, mixed> Extra rules for domain-specific validation. */
     private Collection $extraRules;
 
-    /** @var Collection<string, mixed> Internal-only state not exposed to consumers */
+    /** @var Collection<string, mixed> Internal-only state not exposed to consumers. */
     private Collection $internalOnly;
 
-    /** The action currently being executed (future: narrow to interface) */
+    /** The action instance currently being executed. */
     public ?object $invokedAction = null;
 
-    /** Fully qualified class name of current organizer */
+    /** Fully-qualified class name of the current organizer. */
     private ?string $currentOrganizer = null;
 
-    /** Fully qualified class name of current action */
+    /** Fully-qualified class name of the current action. */
     private ?string $currentAction = null;
 
-    /** Current execution status */
-    private ContextStatus $status;
+    /** Current execution status (defaults to INCOMPLETE). */
+    private ContextStatus $status = ContextStatus::INCOMPLETE;
+
+    /** Whether this context was intentionally aborted (independent of errors/status). */
+    private bool $aborted = false;
 
     /** @codeCoverageIgnore */
     private function __construct()
@@ -65,29 +64,30 @@ final class Context
         $this->input = collect();
         $this->errors = collect();
         $this->params = collect();
-        $this->resource = collect();
+        $this->resources = collect();
         $this->meta = collect();
         $this->extraRules = collect();
         $this->internalOnly = collect();
-        $this->status = ContextStatus::INCOMPLETE;
         $this->markUpdateOperation();
     }
 
     /**
-     * Factory with guarded overrides (unknown keys are ignored).
+     * Create a Context with default empty Collections and optional whitelisted overrides.
+     *
+     * Recognized override keys: params, errors, resource, extraRules, internalOnly, meta, invokedAction.
      *
      * @param  array<string,mixed>  $input
-     * @param  array<string,mixed>  $overrides  keys: params, errors, resource, extraRules, internalOnly, meta, invokedAction
+     * @param  array<string,mixed>  $overrides
      */
     public static function makeWithDefaults(array $input = [], array $overrides = []): self
     {
         $ctx = new self;
-        $ctx->input = self::toCollection($input);
+        $ctx->input = self::asCollection($input);
 
         $map = [
             'params' => 'params',
             'errors' => 'errors',
-            'resource' => 'resource',
+            'resources' => 'resources',
             'extraRules' => 'extraRules',
             'internalOnly' => 'internalOnly',
             'meta' => 'meta',
@@ -95,17 +95,54 @@ final class Context
 
         foreach ($map as $key => $property) {
             if (\array_key_exists($key, $overrides)) {
-                $ctx->{$property} = self::toCollection($overrides[$key]);
+                $ctx->{$property} = self::asCollection($overrides[$key]);
             }
         }
 
         return $ctx;
     }
 
+    /**
+     * Snapshot of context suitable for external consumers.
+     *
+     * @return Collection<string,mixed>
+     */
+    public function toCollection(): Collection
+    {
+        return collect([
+            // core payloads
+            'input' => $this->inputArray(),
+            'params' => $this->paramsArray(),
+            'meta' => $this->metaArray(),
+            'errors' => $this->errorsArray(),
+            'resources' => $this->resourcesArray(),
+
+            // structured error info (if any), from internalOnly
+            'errorInfo' => $this->internalOnly()->get('errorInfo'),
+
+            // meta
+            'organizer' => $this->organizerName(),
+            'action' => $this->actionName(),
+            'status' => $this->status()->name,
+            'aborted' => $this->aborted(),
+            'success' => $this->success(),
+            'failure' => $this->failure(),
+            'operation' => $this->operation(),
+        ]);
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    public function toArray(): array
+    {
+        return $this->toCollection()->toArray();
+    }
+
     // ── Mutators (fluent) ─────────────────────────────────────────────────────────
 
     /**
-     * Merge additional input values (shallow).
+     * Shallow-merge additional input values.
      *
      * @param  array<string,mixed>|Collection<string,mixed>  $values
      */
@@ -115,7 +152,7 @@ final class Context
     }
 
     /**
-     * Merge additional parameters (shallow).
+     * Shallow-merge additional parameters.
      *
      * @param  array<string,mixed>|Collection<string,mixed>  $values
      */
@@ -125,8 +162,7 @@ final class Context
     }
 
     /**
-     * Merge validation or business errors (shallow).
-     * Accepts arrays/collections keyed by field; values may be scalars or arrays.
+     * Shallow-merge validation/business errors and mark the context as aborted.
      */
     public function withErrors(mixed $errors): self
     {
@@ -135,16 +171,16 @@ final class Context
         }
 
         /** @var Collection<string,mixed> $errors */
-        $errors = self::toCollection($errors);
-        $this->addAttrsToContext('errors', self::toCollection($errors));
+        $errors = self::asCollection($errors);
+        $this->addAttrsToContext('errors', $errors);
 
-        $this->markFailed();
+        $this->abort();
 
         return $this;
     }
 
     /**
-     * Merge metadata (shallow).
+     * Shallow-merge metadata.
      *
      * @param  array<string,mixed>|Collection<string,mixed>  $values
      */
@@ -154,7 +190,7 @@ final class Context
     }
 
     /**
-     * Merge internal-only data (shallow).
+     * Shallow-merge internal-only data (not for API consumers).
      *
      * @param  array<string,mixed>|Collection<string,mixed>  $values
      */
@@ -164,39 +200,35 @@ final class Context
     }
 
     /**
-     * Add errors and abort execution.
+     * Shallow-merge resource data.
      *
-     * If no incoming errors and current errors are empty, attaches $message under "base".
-     *
-     * @throws ContextFailedError
+     * @param  array<string,mixed>|Collection<string,mixed>  $values
      */
-    public function addErrorsAndAbort(mixed $errors, string $message = 'Context failed due to validation or business errors.'): void
+    public function withResources(array|Collection $values): self
     {
-        $incoming = self::toCollection($errors);
-
-        if ($incoming->isNotEmpty()) {
-            $this->addAttrsToContext('errors', $incoming);
-        }
-
-        if ($incoming->isEmpty() && $this->errors->isEmpty()) {
-            $this->addAttrsToContext('errors', ['base' => [$message]]);
-        }
-
-        $this->failAndAbort($message);
-    }
-
-    /**
-     * Store a named resource (object, array, etc.).
-     */
-    public function withResource(string $name, mixed $value): self
-    {
-        $this->resource->put($name, $value);
+        $this->addAttrsToContext('resources', self::asCollection($values));
 
         return $this;
     }
 
     /**
-     * Record the invoked action.
+     * Set a single resource value by (dot-notated) key.
+     *
+     * @return $this
+     */
+    public function withResource(string $key, mixed $value): self
+    {
+        /** @var array<string,mixed> $payload */
+        $payload = $this->resourcesArray();
+        data_set($payload, $key, $value);
+
+        $this->resources = collect((array) $payload);
+
+        return $this;
+    }
+
+    /**
+     * Record the invoked action instance for observability.
      */
     public function withInvokedAction(object $action): self
     {
@@ -207,7 +239,7 @@ final class Context
 
     // ── Status helpers ────────────────────────────────────────────────────────────
 
-    /** Mark context as complete */
+    /** Mark the context as COMPLETE. */
     public function markComplete(): self
     {
         $this->status = ContextStatus::COMPLETE;
@@ -215,30 +247,48 @@ final class Context
         return $this;
     }
 
-    /** Mark context as failed */
-    public function markFailed(): self
-    {
-        $this->status = ContextStatus::FAILED;
-
-        return $this;
-    }
-
-    /** Get current status */
+    /** Get the current execution status. */
     public function status(): ContextStatus
     {
         return $this->status;
     }
 
-    /** True when not FAILED and there are no errors */
+    /** Intentionally abort processing (independent of status). */
+    public function abort(): self
+    {
+        $this->aborted = true;
+
+        return $this;
+    }
+
+    /** Whether this context was intentionally aborted. */
+    public function aborted(): bool
+    {
+        return $this->aborted;
+    }
+
+    /** True when not aborted and there are no recorded errors. */
     public function success(): bool
     {
         return ! $this->failure();
     }
 
-    /** True when status is FAILED or there are any errors */
+    /** True when aborted or any errors are present. */
     public function failure(): bool
     {
-        return $this->status === ContextStatus::FAILED || $this->errors->isNotEmpty();
+        return $this->aborted || $this->errors->isNotEmpty();
+    }
+
+    /** Whether status is COMPLETE. */
+    public function isComplete(): bool
+    {
+        return $this->status === ContextStatus::COMPLETE;
+    }
+
+    /** Whether status is INCOMPLETE. */
+    public function isIncomplete(): bool
+    {
+        return $this->status === ContextStatus::INCOMPLETE;
     }
 
     // ── Array accessors ───────────────────────────────────────────────────────────
@@ -262,9 +312,9 @@ final class Context
     }
 
     /** @return array<string,mixed> */
-    public function resourceArray(): array
+    public function resourcesArray(): array
     {
-        return $this->resource->all();
+        return $this->resources->all();
     }
 
     /** @return array<string,mixed> */
@@ -306,9 +356,17 @@ final class Context
     }
 
     /** @return Collection<string,mixed> */
-    public function resource(): Collection
+    public function resources(): Collection
     {
-        return $this->resource;
+        return $this->resources;
+    }
+
+    /**
+     * Fetch a single resource value by (dot-notated) key.
+     */
+    public function resource(string $dottedKey): mixed
+    {
+        return data_get($this->resourcesArray(), $dottedKey);
     }
 
     /** @return Collection<string,mixed> */
@@ -359,21 +417,18 @@ final class Context
     }
 
     /**
-     * Get the recorded list of successful actions.
-     *
      * @return list<string>
      */
     public function successfulActions(): array
     {
-        /** @var list<string> */
+        /** @var list<string> $list */
         $list = (array) ($this->internalOnly->get('successfulActions') ?? []);
 
         return $list;
     }
 
     /**
-     * Store a structured snapshot of the last failed context.
-     * The optional $label defaults to the current action name to aid traceability.
+     * Store a structured snapshot of a failed context for later inspection.
      *
      * @return $this
      */
@@ -385,7 +440,7 @@ final class Context
             'params' => $source->paramsArray(),
             'meta' => $source->metaArray(),
             'errors' => $source->errorsArray(),
-            'resource' => $source->resourceArray(),
+            'resources' => $source->resourcesArray(),
             'status' => $source->status()->name,
         ]);
 
@@ -393,15 +448,13 @@ final class Context
     }
 
     /**
-     * Return the snapshot saved by setLastFailedContext(), if any.
-     *
      * @return array{
      *   label?: string,
      *   input: array<string,mixed>,
      *   params: array<string,mixed>,
      *   meta: array<string,mixed>,
      *   errors: array<string,mixed>,
-     *   resource: array<string,mixed>,
+     *   resources: array<string,mixed>,
      *   status: string
      * }|null
      */
@@ -416,7 +469,7 @@ final class Context
              *   params: array<string,mixed>,
              *   meta: array<string,mixed>,
              *   errors: array<string,mixed>,
-             *   resource: array<string,mixed>,
+             *   resources: array<string,mixed>,
              *   status: string
              * } $value
              */
@@ -426,16 +479,19 @@ final class Context
         return null;
     }
 
+    /** The last captured ErrorInfo from recordRaisedError(), if any. */
     public function errorInfo(): ?ErrorInfo
     {
         return $this->errorInfo;
     }
 
+    /** Short organizer class name, if set. */
     public function organizerName(): ?string
     {
         return $this->currentOrganizer ? self::shortName($this->currentOrganizer) : null;
     }
 
+    /** Short action class name, if set. */
     public function actionName(): ?string
     {
         return $this->currentAction ? self::shortName($this->currentAction) : null;
@@ -443,7 +499,7 @@ final class Context
 
     // ── Errors: formatting and exception capture ──────────────────────────────────
 
-    /** Pretty-print errors as JSON */
+    /** Pretty-print current errors as JSON (UTF-8, pretty). */
     public function formattedErrors(): string
     {
         /** @var string $json */
@@ -458,33 +514,36 @@ final class Context
 
     public function markCreateOperation(): self
     {
-        return $this->withMeta(['operation' => ContextOperation::CREATE]);
+        return $this->withMeta(['operation' => ContextOperation::CREATE->value]);
     }
 
     public function markUpdateOperation(): self
     {
-        return $this->withMeta(['operation' => ContextOperation::UPDATE]);
+        return $this->withMeta(['operation' => ContextOperation::UPDATE->value]);
     }
 
     public function createOperation(): bool
     {
-        return $this->operation() === ContextOperation::CREATE;
+        return $this->operation() === ContextOperation::CREATE->value;
     }
 
     public function updateOperation(): bool
     {
-        return $this->operation() === ContextOperation::UPDATE;
+        return $this->operation() === ContextOperation::UPDATE->value;
     }
 
-    public function operation(): ContextOperation
+    /**
+     * @return string One of ContextOperation::*->value
+     */
+    public function operation(): string
     {
-        /** @var ContextOperation */
+        /** @var string */
         return $this->meta()->get('operation');
     }
 
     /**
-     * Capture a raised exception, merge its errors if available,
-     * and record structured error info in `internalOnly`.
+     * Capture a raised exception, merge its validation errors if available,
+     * and record structured error info in internalOnly['errorInfo'].
      */
     public function recordRaisedError(Throwable $exception): self
     {
@@ -509,25 +568,17 @@ final class Context
         return $this;
     }
 
-    // ── Failure hook ──────────────────────────────────────────────────────────────
-
-    /**
-     * Abort execution by throwing ContextFailedError.
-     *
-     * @throws ContextFailedError
-     */
-    protected function failAndAbort(string $message = ''): void
-    {
-        throw new ContextFailedError(
-            $this,
-            $message !== '' ? $message : 'Context failed.'
-        );
-    }
-
     // ── Internals ────────────────────────────────────────────────────────────────
 
-    /** @return Collection<string,mixed> */
-    private static function toCollection(mixed $value): Collection
+    /**
+     * Normalize input into a Collection.
+     * - Collection → returned as-is
+     * - array|Traversable → collected
+     * - other → empty Collection
+     *
+     * @return Collection<string,mixed>
+     */
+    private static function asCollection(mixed $value): Collection
     {
         if ($value instanceof Collection) {
             return $value;
@@ -542,6 +593,7 @@ final class Context
         return collect();
     }
 
+    /** Extract the short (basename) of a fully-qualified class name. */
     private static function shortName(string $fqcn): string
     {
         $pos = strrpos($fqcn, '\\');
@@ -550,14 +602,15 @@ final class Context
     }
 
     /**
-     * Shallow-merge attributes into one of the context collections.
+     * Shallow-merge attributes into one of the context Collections.
      *
-     * @param  'input'|'params'|'errors'|'meta'|'internalOnly'  $target
+     * @param  'input'|'params'|'errors'|'meta'|'internalOnly'|'resources'  $target
      * @param  array<string,mixed>|Collection<string,mixed>  $attrs
+     * @return $this
      */
     private function addAttrsToContext(string $target, array|Collection $attrs): self
     {
-        $incoming = self::toCollection($attrs);
+        $incoming = self::asCollection($attrs);
 
         if ($incoming->isEmpty()) {
             return $this;

@@ -6,516 +6,566 @@ use Flowlight\Context;
 use Flowlight\Enums\ContextOperation;
 use Flowlight\Enums\ContextStatus;
 use Flowlight\ErrorInfo;
-use Flowlight\Exceptions\ContextFailedError;
 use Illuminate\Support\Collection;
 
-describe(Context::class, function () {
-    describe('::makeWithDefaults', function () {
-        it('creates context with defaults and overrides', function () {
-            $ctx = Context::makeWithDefaults(['in' => 1], [
-                'params' => ['p' => 1],
-                'meta' => ['m' => true],
-            ]);
+describe('::makeWithDefaults', function () {
+    it('creates context with defaults and overrides', function () {
+        $ctx = Context::makeWithDefaults(['in' => 1], [
+            'params' => ['p' => 1],
+            'meta' => ['m' => true],
+            'resources' => ['r' => [1, 2]],
+        ]);
 
-            expect($ctx->inputArray())->toBe(['in' => 1])
-                ->and($ctx->paramsArray())->toBe(['p' => 1])
-                ->and($ctx->metaArray())->toBe(['m' => true]);
-        });
-
-        it('ignores unknown keys without side effects', function () {
-            $ctx = Context::makeWithDefaults([], ['unknown' => 'x']);
-
-            expect($ctx->paramsArray())->toBe([])
-                ->and($ctx->errorsArray())->toBe([])
-                ->and($ctx->resourceArray())->toBe([])
-                ->and($ctx->metaArray())->toBe(['operation' => ContextOperation::UPDATE])
-                ->and($ctx->extraRulesArray())->toBe([])
-                ->and($ctx->internalOnlyArray())->toBe([]);
-        });
-
-        it('accepts overrides for extraRules and internalOnly', function () {
-            $ctx = Context::makeWithDefaults([], [
-                'extraRules' => ['min' => 2],
-                'internalOnly' => ['trace' => true],
-            ]);
-
-            expect($ctx->extraRulesArray())->toBe(['min' => 2])
-                ->and($ctx->internalOnlyArray())->toBe(['trace' => true]);
-        });
-
-        it('cannot set invokedAction via overrides when object provided', function () {
-            $action = new stdClass;
-            $ctx = Context::makeWithDefaults([], ['invokedAction' => $action]);
-            expect($ctx->invokedAction)->toBeNull();
-        });
+        expect($ctx->inputArray())->toBe(['in' => 1])
+            ->and($ctx->paramsArray())->toBe(['p' => 1])
+            ->and($ctx->metaArray())->toBe(['m' => true])
+            ->and($ctx->resourcesArray())->toBe(['r' => [1, 2]]);
     });
 
-    describe('withInputs', function () {
-        it('merges input values', function () {
-            $ctx = Context::makeWithDefaults();
-            $ctx->withInputs(['a' => 1])->withInputs(['b' => 2]);
+    it('ignores unknown keys without side effects', function () {
+        $ctx = Context::makeWithDefaults([], ['unknown' => 'x']);
 
-            expect($ctx->inputArray())->toBe(['a' => 1, 'b' => 2]);
-        });
+        expect($ctx->paramsArray())->toBe([])
+            ->and($ctx->errorsArray())->toBe([])
+            ->and($ctx->resourcesArray())->toBe([])
+            ->and($ctx->metaArray())->toBe(['operation' => ContextOperation::UPDATE->value])
+            ->and($ctx->extraRulesArray())->toBe([])
+            ->and($ctx->internalOnlyArray())->toBe([]);
     });
 
-    describe('withParams', function () {
-        it('merges params', function () {
-            $ctx = Context::makeWithDefaults()
-                ->withParams(['p' => 1])
-                ->withParams(['q' => 2]);
+    it('accepts overrides for extraRules and internalOnly', function () {
+        $ctx = Context::makeWithDefaults([], [
+            'extraRules' => ['min' => 2],
+            'internalOnly' => ['trace' => true],
+        ]);
 
-            expect($ctx->paramsArray())->toBe(['p' => 1, 'q' => 2]);
-        });
+        expect($ctx->extraRulesArray())->toBe(['min' => 2])
+            ->and($ctx->internalOnlyArray())->toBe(['trace' => true]);
     });
 
-    describe('withErrors', function () {
-        it('marks context as failed', function () {
-            $ctx = Context::makeWithDefaults();
-            $ctx->withErrors(['email' => ['invalid']]);
-            expect($ctx->status())->toBe(ContextStatus::FAILED);
-        });
+    it('cannot set invokedAction via overrides when object provided', function () {
+        $action = new stdClass;
+        $ctx = Context::makeWithDefaults([], ['invokedAction' => $action]);
+        expect($ctx->invokedAction)->toBeNull();
+    });
+});
 
-        it('merges and deduplicates errors per field while keeping order', function () {
-            $ctx = Context::makeWithDefaults();
-            $ctx->withErrors(['email' => ['invalid']]);
-            $ctx->withErrors(['email' => ['invalid', 'too short']]);
+describe('withInputs', function () {
+    it('merges input values', function () {
+        $ctx = Context::makeWithDefaults();
+        $ctx->withInputs(['a' => 1])->withInputs(['b' => 2]);
 
-            expect($ctx->errorsArray())->toBe([
-                'email' => ['invalid', 'too short'],
-            ]);
-        });
+        expect($ctx->inputArray())->toBe(['a' => 1, 'b' => 2]);
+    });
+});
 
-        it('accepts scalars', function () {
-            $ctx = Context::makeWithDefaults();
+describe('withParams', function () {
+    it('merges params', function () {
+        $ctx = Context::makeWithDefaults()
+            ->withParams(['p' => 1])
+            ->withParams(['q' => 2]);
 
-            $ctx->withErrors(['age' => 0]);
-            $ctx->withErrors(['active' => true]);
-
-            expect($ctx->errorsArray())->toBe([
-                'age' => 0,
-                'active' => true,
-            ]);
-        });
-
-        it('accepts Traversable and normalizes via toCollection', function () {
-            $iter = new ArrayIterator(['email' => ['invalid']]);
-            $ctx = Context::makeWithDefaults();
-            $ctx->withErrors($iter);
-
-            expect($ctx->errorsArray())->toBe(['email' => ['invalid']]);
-        });
-
-        it('merges multiple fields in one call', function () {
-            $ctx = Context::makeWithDefaults();
-            $ctx->withErrors([
-                'name' => ['required'],
-                'email' => ['invalid'],
-            ]);
-            expect($ctx->errorsArray())->toBe([
-                'name' => ['required'],
-                'email' => ['invalid'],
-            ]);
-        });
+        expect($ctx->paramsArray())->toBe(['p' => 1, 'q' => 2]);
     });
 
-    it('withMeta merges meta values', function () {
+    it('is a no-op when given an empty params payload', function () {
+        $ctx = Context::makeWithDefaults()->withParams(['x' => 1]);
+        $same = $ctx->withParams([]); // should not change anything
+        expect($same)->toBe($ctx)
+            ->and($ctx->paramsArray())->toBe(['x' => 1]);
+    });
+});
+
+describe('withErrors', function () {
+    it('marks context as failed', function () {
+        $ctx = Context::makeWithDefaults();
+        $ctx->withErrors(['email' => ['invalid']]);
+        expect($ctx->status())->toBe(ContextStatus::INCOMPLETE);
+    });
+
+    it('merges and deduplicates errors per field while keeping order', function () {
+        $ctx = Context::makeWithDefaults();
+        $ctx->withErrors(['email' => ['invalid']]);
+        $ctx->withErrors(['email' => ['invalid', 'too short']]);
+
+        expect($ctx->errorsArray())->toBe([
+            'email' => ['invalid', 'too short'],
+        ]);
+    });
+
+    it('accepts scalars', function () {
+        $ctx = Context::makeWithDefaults();
+
+        $ctx->withErrors(['age' => 0]);
+        $ctx->withErrors(['active' => true]);
+
+        expect($ctx->errorsArray())->toBe([
+            'age' => 0,
+            'active' => true,
+        ]);
+    });
+
+    it('accepts Traversable and normalizes via toCollection', function () {
+        $iter = new ArrayIterator(['email' => ['invalid']]);
+        $ctx = Context::makeWithDefaults();
+        $ctx->withErrors($iter);
+
+        expect($ctx->errorsArray())->toBe(['email' => ['invalid']]);
+    });
+
+    it('merges multiple fields in one call', function () {
+        $ctx = Context::makeWithDefaults();
+        $ctx->withErrors([
+            'name' => ['required'],
+            'email' => ['invalid'],
+        ]);
+        expect($ctx->errorsArray())->toBe([
+            'name' => ['required'],
+            'email' => ['invalid'],
+        ]);
+    });
+
+    it('is a no-op when given empty errors', function () {
+        $ctx = Context::makeWithDefaults()->withErrors([]);
+        expect($ctx->errorsArray())->toBe([])
+            ->and($ctx->aborted())->toBeFalse(); // guard should not flip aborted
+    });
+});
+
+describe('withMeta', function () {
+    it('merges meta values', function () {
         $ctx = Context::makeWithDefaults()->markUpdateOperation();
 
         $ctx->withMeta(['a' => 1])->withMeta(['b' => 2]);
 
         // enum-aware assertions
-        expect($ctx->operation())->toBe(ContextOperation::UPDATE)
-            ->and($ctx->meta()->get('operation'))->toBe(ContextOperation::UPDATE)
+        expect($ctx->operation())->toBe(ContextOperation::UPDATE->value)
+            ->and($ctx->meta()->get('operation'))->toBe(ContextOperation::UPDATE->value)
             ->and($ctx->metaArray())->toMatchArray([
                 'a' => 1,
                 'b' => 2,
-                'operation' => ContextOperation::UPDATE,
+                'operation' => ContextOperation::UPDATE->value,
             ]);
-
-        // still merges the rest
     });
 
-    describe('withInternalOnly', function () {
-        it('merges internal-only values', function () {
-            $ctx = Context::makeWithDefaults()
-                ->withInternalOnly(['foo' => 'bar'])
-                ->withInternalOnly(['baz' => 1]);
+    it('withMeta merges alongside operation without coercing to string', function () {
+        $ctx = Context::makeWithDefaults()->markUpdateOperation();
+        $ctx->withMeta(['foo' => 'bar']);
 
-            expect($ctx->internalOnlyArray())->toBe(['foo' => 'bar', 'baz' => 1]);
-        });
-    });
-
-    describe('withResource', function () {
-        it('stores resources by key and overwrites existing keys', function () {
-            $ctx = Context::makeWithDefaults()
-                ->withResource('obj', ['id' => 1])
-                ->withResource('obj', ['id' => 2])
-                ->withResource('list', [1, 2]);
-
-            expect($ctx->resourceArray())->toBe([
-                'obj' => ['id' => 2],
-                'list' => [1, 2],
+        expect($ctx->operation())->toBe(ContextOperation::UPDATE->value)
+            ->and($ctx->metaArray())->toMatchArray([
+                'foo' => 'bar',
+                'operation' => ContextOperation::UPDATE->value,
             ]);
-        });
+    });
+});
+
+describe('withInternalOnly', function () {
+    it('merges internal-only values', function () {
+        $ctx = Context::makeWithDefaults()
+            ->withInternalOnly(['foo' => 'bar'])
+            ->withInternalOnly(['baz' => 1]);
+
+        expect($ctx->internalOnlyArray())->toBe(['foo' => 'bar', 'baz' => 1]);
+    });
+});
+
+describe('resources API', function () {
+    it('withResource sets by key (overwrites) and withResources merges shallowly', function () {
+        $ctx = Context::makeWithDefaults()
+            ->withResource('obj', ['id' => 1])
+            ->withResource('obj', ['id' => 2]) // overwrite
+            ->withResources(['list' => [1]])   // merge
+            ->withResources(['list' => [1, 2], 'extra' => true]); // merge+add
+
+        expect($ctx->resourcesArray())->toBe([
+            'obj' => ['id' => 2],
+            'list' => [1, 2],
+            'extra' => true,
+        ]);
     });
 
-    describe('withInvokedAction', function () {
-        it('sets the invokedAction object', function () {
-            $action = new stdClass;
-            $ctx = Context::makeWithDefaults()->withInvokedAction($action);
+    it('withResources with empty collection is a no-op merge', function () {
+        $ctx = Context::makeWithDefaults();
 
-            expect($ctx->invokedAction)->toBe($action);
-        });
+        $ctx->withResources(collect());
+        expect($ctx->resourcesArray())->toBe([]);
     });
 
-    describe('addErrorsAndAbort', function () {
-        it('adds base error when incoming and current errors are empty, then throws', function () {
-            $ctx = Context::makeWithDefaults();
+    it('resource() supports dotted keys and returns null for missing', function () {
+        $ctx = Context::makeWithDefaults()->withResources([
+            'a' => ['b' => ['c' => 3]],
+        ]);
 
-            $caught = null;
-            try {
-                $ctx->addErrorsAndAbort([]);
-            } catch (ContextFailedError $e) {
-                $caught = $e;
-            }
-
-            expect($caught)->not->toBeNull();
-            expect($caught)->toBeInstanceOf(ContextFailedError::class);
-            /** @var ContextFailedError $caught */
-            $caughtCtx = $caught->getContext();
-
-            expect($caughtCtx->errorsArray())->toBe([
-                'base' => ['Context failed due to validation or business errors.'],
-            ]);
-        });
-
-        it('merges provided errors and throws', function () {
-            $ctx = Context::makeWithDefaults();
-
-            $caught = null;
-            try {
-                $ctx->addErrorsAndAbort(['username' => ['taken']]);
-            } catch (ContextFailedError $e) {
-                $caught = $e;
-            }
-
-            expect($caught)->not->toBeNull();
-            expect($caught)->toBeInstanceOf(ContextFailedError::class);
-            /** @var ContextFailedError $caught */
-            $caughtCtx = $caught->getContext();
-
-            expect($caughtCtx->errorsArray())->toBe([
-                'username' => ['taken'],
-            ]);
-        });
+        expect($ctx->resource('a.b.c'))->toBe(3)
+            ->and($ctx->resource('a.b.x'))->toBeNull();
     });
 
-    describe('formattedErrors', function () {
-        it('pretty-prints errors as JSON', function () {
-            $ctx = Context::makeWithDefaults()->withErrors(['f' => ['e']]);
+    it('resources() returns the backing Collection and supports onlyKeys via Collection::only()', function () {
+        $ctx = Context::makeWithDefaults()->withResources([
+            'r' => ['id' => 9],
+            's' => 2,
+        ]);
 
-            expect($ctx->formattedErrors())->toBe(
-                json_encode(['f' => ['e']], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
-            );
-        });
+        $all = $ctx->resources();
+        $only = $ctx->resources()->only(['r']);
 
-        it('pretty-prints empty map when there are no errors', function () {
-            $ctx = Context::makeWithDefaults();
-            expect($ctx->formattedErrors())->toBe(
-                json_encode([], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
-            );
-        });
+        expect($all)->toBeInstanceOf(Collection::class)
+            ->and($all->get('r'))->toBe(['id' => 9])
+            ->and($only->all())->toBe(['r' => ['id' => 9]]);
+    });
+});
 
-        it('includes unicode characters unescaped', function () {
-            $ctx = Context::makeWithDefaults()->withErrors(['name' => ['α']]);
-            expect($ctx->formattedErrors())->toBe(
-                json_encode(['name' => ['α']], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
-            );
-        });
+describe('withInvokedAction', function () {
+    it('sets the invokedAction object', function () {
+        $action = new stdClass;
+        $ctx = Context::makeWithDefaults()->withInvokedAction($action);
+
+        expect($ctx->invokedAction)->toBe($action);
+    });
+});
+
+describe('formattedErrors', function () {
+    it('pretty-prints errors as JSON', function () {
+        $ctx = Context::makeWithDefaults()->withErrors(['f' => ['e']]);
+
+        expect($ctx->formattedErrors())->toBe(
+            json_encode(['f' => ['e']], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
+        );
     });
 
-    describe('markComplete / markFailed / status', function () {
-        it('updates status enum correctly', function () {
-            $ctx = Context::makeWithDefaults();
-
-            expect($ctx->status())->toBe(ContextStatus::INCOMPLETE);
-
-            $ctx->markComplete();
-            expect($ctx->status())->toBe(ContextStatus::COMPLETE);
-
-            $ctx->markFailed();
-            expect($ctx->status())->toBe(ContextStatus::FAILED);
-        });
+    it('pretty-prints empty map when there are no errors', function () {
+        $ctx = Context::makeWithDefaults();
+        expect($ctx->formattedErrors())->toBe(
+            json_encode([], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
+        );
     });
 
-    describe('success() / failure()', function () {
-        it('fresh context is successful (no errors, not FAILED)', function () {
-            $ctx = Context::makeWithDefaults();
-            expect($ctx->success())->toBeTrue()
-                ->and($ctx->failure())->toBeFalse();
-        });
+    it('includes unicode characters unescaped', function () {
+        $ctx = Context::makeWithDefaults()->withErrors(['name' => ['α']]);
+        expect($ctx->formattedErrors())->toBe(
+            json_encode(['name' => ['α']], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
+        );
+    });
+});
 
-        it('adding errors flips to failure()', function () {
-            $ctx = Context::makeWithDefaults()->withErrors(['f' => ['e']]);
-            expect($ctx->success())->toBeFalse()
-                ->and($ctx->failure())->toBeTrue();
-        });
+describe('markComplete / status', function () {
+    it('updates status enum correctly', function () {
+        $ctx = Context::makeWithDefaults();
 
-        it('markFailed() forces failure()', function () {
-            $ctx = Context::makeWithDefaults()->markFailed();
-            expect($ctx->success())->toBeFalse()
-                ->and($ctx->failure())->toBeTrue();
-        });
+        expect($ctx->status())->toBe(ContextStatus::INCOMPLETE);
 
-        it('completed without errors remains success()', function () {
-            $ctx = Context::makeWithDefaults()->markComplete();
-            expect($ctx->success())->toBeTrue()
-                ->and($ctx->failure())->toBeFalse();
-        });
+        $ctx->markComplete();
+        expect($ctx->status())->toBe(ContextStatus::COMPLETE);
+
+        $ctx->abort();
+        expect($ctx->aborted())->toBeTrue();
+    });
+});
+
+describe('isIncomplete', function () {
+    it('reflects INCOMPLETE until markComplete is called', function () {
+        $ctx = Context::makeWithDefaults();
+
+        expect($ctx->isIncomplete())->toBeTrue();
+
+        $ctx->markComplete();
+
+        expect($ctx->isIncomplete())->toBeFalse();
+    });
+});
+
+describe('success() / failure()', function () {
+    it('fresh context is successful (no errors, not FAILED)', function () {
+        $ctx = Context::makeWithDefaults();
+        expect($ctx->success())->toBeTrue()
+            ->and($ctx->failure())->toBeFalse();
     });
 
-    describe('setCurrentOrganizer / setCurrentAction', function () {
-        it('stores FQCNs and returns short names via organizerName/actionName', function () {
-            $ctx = Context::makeWithDefaults()
-                ->setCurrentOrganizer('Vendor\\Pkg\\Org\\MyOrganizer')
-                ->setCurrentAction('Vendor\\Pkg\\Act\\MyAction');
-
-            expect($ctx->organizerName())->toBe('MyOrganizer')
-                ->and($ctx->actionName())->toBe('MyAction');
-        });
-
-        it('returns null names when not set', function () {
-            $ctx = Context::makeWithDefaults();
-            expect($ctx->organizerName())->toBeNull()
-                ->and($ctx->actionName())->toBeNull();
-        });
+    it('adding errors flips to failure()', function () {
+        $ctx = Context::makeWithDefaults()->withErrors(['f' => ['e']]);
+        expect($ctx->success())->toBeFalse()
+            ->and($ctx->failure())->toBeTrue();
     });
 
-    describe('recordRaisedError', function () {
-        it('merges errors from exceptions exposing ->errors() and stores errorInfo', function () {
-            $ex = new class('bad') extends Exception
+    it('abort() forces failure()', function () {
+        $ctx = Context::makeWithDefaults()->abort();
+        expect($ctx->success())->toBeFalse()
+            ->and($ctx->failure())->toBeTrue();
+    });
+
+    it('completed without errors remains success()', function () {
+        $ctx = Context::makeWithDefaults()->markComplete();
+        expect($ctx->success())->toBeTrue()
+            ->and($ctx->failure())->toBeFalse();
+    });
+});
+
+describe('setCurrentOrganizer / setCurrentAction', function () {
+    it('stores FQCNs and returns short names via organizerName/actionName', function () {
+        $ctx = Context::makeWithDefaults()
+            ->setCurrentOrganizer('Vendor\\Pkg\\Org\\MyOrganizer')
+            ->setCurrentAction('Vendor\\Pkg\\Act\\MyAction');
+
+        expect($ctx->organizerName())->toBe('MyOrganizer')
+            ->and($ctx->actionName())->toBe('MyAction');
+    });
+
+    it('returns null names when not set', function () {
+        $ctx = Context::makeWithDefaults();
+        expect($ctx->organizerName())->toBeNull()
+            ->and($ctx->actionName())->toBeNull();
+    });
+
+    it('returns the same name when action has no namespace separator', function () {
+        $ctx = Context::makeWithDefaults()->setCurrentAction('PlainAction');
+        expect($ctx->actionName())->toBe('PlainAction');
+    });
+});
+
+describe('recordRaisedError', function () {
+    it('merges errors from exceptions exposing ->errors() and stores errorInfo', function () {
+        $ex = new class('bad') extends Exception
+        {
+            /** @return array<string, list<string>> */
+            public function errors(): array
             {
-                /** @return array<string, list<string>> */
-                public function errors(): array
-                {
-                    return ['field' => ['oops']];
-                }
-            };
-
-            $ctx = Context::makeWithDefaults()
-                ->setCurrentOrganizer('Foo\\Org\\RealOrganizer')
-                ->setCurrentAction('Foo\\Act\\DoThing')
-                ->recordRaisedError($ex);
-
-            expect($ctx->errorsArray())->toBe(['field' => ['oops']]);
-
-            $info = $ctx->internalOnly()->get('errorInfo');
-            expect($info)->toBeArray();
-            /** @var array{organizer?:string,actionName?:string,type?:string,message?:string,exception?:string,backtrace?:string} $info */
-            expect($info)->toHaveKeys(['organizer', 'actionName', 'type', 'message', 'exception', 'backtrace']);
-
-            if (isset($info['organizer'])) {
-                expect($info['organizer'])->toBe('RealOrganizer');
+                return ['field' => ['oops']];
             }
-            if (isset($info['actionName'])) {
-                expect($info['actionName'])->toBe('DoThing');
-            }
-            if (isset($info['type'])) {
-                expect($info['type'])->toBe($ex::class);
-            }
+        };
 
-            // Assert accessor is not null, then narrow type for PHPStan:
-            $errorInfo = $ctx->errorInfo();
-            expect($errorInfo)->not->toBeNull();
+        $ctx = Context::makeWithDefaults()
+            ->setCurrentOrganizer('Foo\\Org\\RealOrganizer')
+            ->setCurrentAction('Foo\\Act\\DoThing')
+            ->recordRaisedError($ex);
 
-            /** @var ErrorInfo $errorInfo */
-            $errorInfo = $errorInfo;
+        expect($ctx->errorsArray())->toBe(['field' => ['oops']]);
 
-            expect($errorInfo->type)->toBe($ex::class)
-                ->and($errorInfo->message)->toBe('bad');
-        });
+        $info = $ctx->internalOnly()->get('errorInfo');
+        expect($info)->toBeArray();
+        /** @var array{organizer?:string,actionName?:string,type?:string,message?:string,exception?:string,backtrace?:string} $info */
+        expect($info)->toHaveKeys(['organizer', 'actionName', 'type', 'message', 'exception', 'backtrace']);
 
-        it('still records errorInfo when exception has no errors()', function () {
-            $ex = new RuntimeException('boom');
+        if (isset($info['organizer'])) {
+            expect($info['organizer'])->toBe('RealOrganizer');
+        }
+        if (isset($info['actionName'])) {
+            expect($info['actionName'])->toBe('DoThing');
+        }
+        if (isset($info['type'])) {
+            expect($info['type'])->toBe($ex::class);
+        }
 
-            $ctx = Context::makeWithDefaults()->recordRaisedError($ex);
+        // Assert accessor is not null, then narrow type for PHPStan:
+        $errorInfo = $ctx->errorInfo();
+        expect($errorInfo)->not->toBeNull();
 
-            $info = $ctx->internalOnly()->get('errorInfo');
-            expect($info)->toBeArray();
-            /** @var array<string, mixed> $info */
-            expect($info)->toHaveKeys(['type', 'message', 'exception', 'backtrace']);
+        /** @var ErrorInfo $errorInfo */
+        $errorInfo = $errorInfo;
 
-            // Narrow type for PHPStan, then access properties
-            $errorInfo = $ctx->errorInfo();
-            expect($errorInfo)->toBeInstanceOf(ErrorInfo::class);
-
-            /** @var ErrorInfo $errorInfo */
-            $errorInfo = $errorInfo;
-
-            expect($errorInfo->type)->toBe($ex::class)
-                ->and($errorInfo->message)->toBe('boom');
-        });
+        expect($errorInfo->type)->toBe($ex::class)
+            ->and($errorInfo->message)->toBe('bad');
     });
 
-    describe('array and collection accessors', function () {
-        it('exposes the underlying state as arrays', function () {
-            $ctx = Context::makeWithDefaults(['k' => 'v'], [
-                'params' => ['p' => 1],
-                'meta' => ['m' => true],
-                'resource' => ['r' => [1, 2]],
+    it('still records errorInfo when exception has no errors()', function () {
+        $ex = new RuntimeException('boom');
+
+        $ctx = Context::makeWithDefaults()->recordRaisedError($ex);
+
+        $info = $ctx->internalOnly()->get('errorInfo');
+        expect($info)->toBeArray();
+        /** @var array<string, mixed> $info */
+        expect($info)->toHaveKeys(['type', 'message', 'exception', 'backtrace']);
+
+        // Narrow type for PHPStan, then access properties
+        $errorInfo = $ctx->errorInfo();
+        expect($errorInfo)->toBeInstanceOf(ErrorInfo::class);
+
+        /** @var ErrorInfo $errorInfo */
+        $errorInfo = $errorInfo;
+
+        expect($errorInfo->type)->toBe($ex::class)
+            ->and($errorInfo->message)->toBe('boom');
+    });
+});
+
+describe('array and collection accessors', function () {
+    it('exposes the underlying state as arrays', function () {
+        $ctx = Context::makeWithDefaults(['k' => 'v'], [
+            'params' => ['p' => 1],
+            'meta' => ['m' => true],
+            'resources' => ['r' => [1, 2]],
+        ]);
+
+        expect($ctx->inputArray())->toBe(['k' => 'v'])
+            ->and($ctx->paramsArray())->toBe(['p' => 1])
+            ->and($ctx->metaArray())->toBe(['m' => true])
+            ->and($ctx->resourcesArray())->toBe(['r' => [1, 2]]);
+    });
+
+    it('exposes collections directly', function () {
+        $ctx = Context::makeWithDefaults(['a' => 1]);
+        $input = $ctx->input();
+
+        expect($input->get('a'))->toBe(1)
+            ->and($input)->toBeInstanceOf(Collection::class);
+    });
+
+    it('exposes errors/params/resources/meta/extraRules via collection accessors', function () {
+        $ctx = Context::makeWithDefaults([], [
+            'extraRules' => ['min' => 3],
+        ])
+            ->withParams(['p' => 1])
+            ->withMeta(['m' => true])
+            ->withResource('r', ['id' => 9])
+            ->withErrors(['e' => ['msg']]);
+
+        $errors = $ctx->errors();
+        $params = $ctx->params();
+        $resources = $ctx->resources();
+        $meta = $ctx->meta();
+        $extra = $ctx->extraRules();
+
+        expect($errors)->toBeInstanceOf(Collection::class)
+            ->and($errors->get('e'))->toBe(['msg'])
+            ->and($params)->toBeInstanceOf(Collection::class)
+            ->and($params->get('p'))->toBe(1)
+            ->and($resources)->toBeInstanceOf(Collection::class)
+            ->and($resources->get('r'))->toBe(['id' => 9])
+            ->and($meta)->toBeInstanceOf(Collection::class)
+            ->and($meta->get('m'))->toBe(true)
+            ->and($extra)->toBeInstanceOf(Collection::class)
+            ->and($extra->get('min'))->toBe(3);
+    });
+});
+
+describe('successfulActions', function () {
+    it('defaults to empty, then appends with de-duplication and preserves order', function () {
+        $ctx = Context::makeWithDefaults();
+
+        expect($ctx->successfulActions())->toBe([]);
+
+        $ctx->addSuccessfulAction('A')
+            ->addSuccessfulAction('B')
+            ->addSuccessfulAction('A');
+
+        expect($ctx->successfulActions())->toBe(['A', 'B']);
+    });
+});
+
+describe('lastFailedContext snapshot', function () {
+    it('returns null when unset', function () {
+        $ctx = Context::makeWithDefaults();
+
+        expect($ctx->lastFailedContext())->toBeNull();
+    });
+
+    it('captures a full snapshot with default label = actionName()', function () {
+        $ctx = Context::makeWithDefaults(
+            ['in' => 1],
+            [
+                'params' => ['p' => 2],
+                'meta' => ['m' => 3],
+                'resources' => ['r' => ['x' => true]],
+            ]
+        )
+            ->setCurrentAction('App\\Actions\\DoThing')
+            ->withErrors(['field' => ['bad']])
+            ->abort();
+
+        $ctx->setLastFailedContext($ctx);
+
+        $snap = $ctx->lastFailedContext();
+
+        expect($snap)->not->toBeNull();
+        /** @var array{
+         *   label?: string,
+         *   input: array<string,mixed>,
+         *   params: array<string,mixed>,
+         *   meta: array<string,mixed>,
+         *   errors: array<string,mixed>,
+         *   resources: array<string,mixed>,
+         *   status: string
+         * } $snap
+         */
+        expect($snap)->toHaveKeys(['input', 'params', 'meta', 'errors', 'resources', 'status'])
+            ->and($snap)->toHaveKey('label', 'DoThing')
+            ->and($snap['input'])->toBe(['in' => 1])
+            ->and($snap['params'])->toBe(['p' => 2])
+            ->and($snap['meta'])->toBe(['m' => 3])
+            ->and($snap['errors'])->toBe(['field' => ['bad']])
+            ->and($snap['resources'])->toBe(['r' => ['x' => true]])
+            ->and($snap['status'])->toBe(ContextStatus::INCOMPLETE->value);
+    });
+
+    it('allows overriding the label', function () {
+        $ctx = Context::makeWithDefaults(['k' => 'v'])
+            ->setCurrentAction('App\\Actions\\IgnoredForCustomLabel')
+            ->withErrors(['base' => ['oops']])
+            ->abort();
+
+        $ctx->setLastFailedContext($ctx, 'CustomLabel');
+
+        $snap = $ctx->lastFailedContext();
+
+        expect($snap)
+            ->not->toBeNull()
+            ->toMatchArray([
+                'label' => 'CustomLabel',
+                'status' => ContextStatus::INCOMPLETE->value,
             ]);
+    });
+});
 
-            expect($ctx->inputArray())->toBe(['k' => 'v'])
-                ->and($ctx->paramsArray())->toBe(['p' => 1])
-                ->and($ctx->metaArray())->toBe(['m' => true])
-                ->and($ctx->resourceArray())->toBe(['r' => [1, 2]]);
-        });
-
-        it('exposes collections directly', function () {
-            $ctx = Context::makeWithDefaults(['a' => 1]);
-            $input = $ctx->input();
-
-            expect($input->get('a'))->toBe(1)
-                ->and($input)->toBeInstanceOf(Collection::class);
-        });
-
-        it('exposes errors/params/resource/meta/extraRules via collection accessors', function () {
-            $ctx = Context::makeWithDefaults([], [
-                'extraRules' => ['min' => 3],
-            ])
-                ->withParams(['p' => 1])
-                ->withMeta(['m' => true])
-                ->withResource('r', ['id' => 9])
-                ->withErrors(['e' => ['msg']]);
-
-            $errors = $ctx->errors();
-            $params = $ctx->params();
-            $resource = $ctx->resource();
-            $meta = $ctx->meta();
-            $extra = $ctx->extraRules();
-
-            expect($errors)->toBeInstanceOf(Collection::class)
-                ->and($errors->get('e'))->toBe(['msg'])
-                ->and($params)->toBeInstanceOf(Collection::class)
-                ->and($params->get('p'))->toBe(1)
-                ->and($resource)->toBeInstanceOf(Collection::class)
-                ->and($resource->get('r'))->toBe(['id' => 9])
-                ->and($meta)->toBeInstanceOf(Collection::class)
-                ->and($meta->get('m'))->toBe(true)
-                ->and($extra)->toBeInstanceOf(Collection::class)
-                ->and($extra->get('min'))->toBe(3);
-        });
+describe('operation helpers', function () {
+    it('defaults to UPDATE on new contexts', function () {
+        $ctx = Context::makeWithDefaults(); // ctor marks UPDATE by default
+        expect($ctx->operation())->toBe(ContextOperation::UPDATE->value)
+            ->and($ctx->meta()->get('operation'))->toBe(ContextOperation::UPDATE->value);
     });
 
-    describe('successfulActions', function () {
-        it('defaults to empty, then appends with de-duplication and preserves order', function () {
-            $ctx = Context::makeWithDefaults();
-
-            expect($ctx->successfulActions())->toBe([]);
-
-            $ctx->addSuccessfulAction('A')
-                ->addSuccessfulAction('B')
-                ->addSuccessfulAction('A');
-
-            expect($ctx->successfulActions())->toBe(['A', 'B']);
-        });
+    it('markCreateOperation switches to CREATE', function () {
+        $ctx = Context::makeWithDefaults()->markCreateOperation();
+        expect($ctx->operation())->toBe(ContextOperation::CREATE->value)
+            ->and($ctx->createOperation())->toBeTrue()
+            ->and($ctx->updateOperation())->toBeFalse();
     });
 
-    describe('lastFailedContext snapshot', function () {
-        it('returns null when unset', function () {
-            $ctx = Context::makeWithDefaults();
-
-            expect($ctx->lastFailedContext())->toBeNull();
-        });
-
-        it('captures a full snapshot with default label = actionName()', function () {
-            $ctx = Context::makeWithDefaults(
-                ['in' => 1],
-                [
-                    'params' => ['p' => 2],
-                    'meta' => ['m' => 3],
-                    'resource' => ['r' => ['x' => true]],
-                ]
-            )
-                ->setCurrentAction('App\\Actions\\DoThing')
-                ->withErrors(['field' => ['bad']])
-                ->markFailed();
-
-            $ctx->setLastFailedContext($ctx);
-
-            $snap = $ctx->lastFailedContext();
-
-            expect($snap)->not->toBeNull();
-            /** @var array{
-             *   label?: string,
-             *   input: array<string,mixed>,
-             *   params: array<string,mixed>,
-             *   meta: array<string,mixed>,
-             *   errors: array<string,mixed>,
-             *   resource: array<string,mixed>,
-             *   status: string
-             * } $snap
-             */
-            expect($snap)->toHaveKeys(['input', 'params', 'meta', 'errors', 'resource', 'status'])
-                ->and($snap)->toHaveKey('label', 'DoThing')
-                ->and($snap['input'])->toBe(['in' => 1])
-                ->and($snap['params'])->toBe(['p' => 2])
-                ->and($snap['meta'])->toBe(['m' => 3])
-                ->and($snap['errors'])->toBe(['field' => ['bad']])
-                ->and($snap['resource'])->toBe(['r' => ['x' => true]])
-                ->and($snap['status'])->toBe('FAILED');
-        });
-
-        it('allows overriding the label', function () {
-            $ctx = Context::makeWithDefaults(['k' => 'v'])
-                ->setCurrentAction('App\\Actions\\IgnoredForCustomLabel')
-                ->withErrors(['base' => ['oops']])
-                ->markFailed();
-
-            $ctx->setLastFailedContext($ctx, 'CustomLabel');
-
-            $snap = $ctx->lastFailedContext();
-
-            expect($snap)
-                ->not->toBeNull()
-                ->toMatchArray([
-                    'label' => 'CustomLabel',
-                    'status' => 'FAILED',
-                ]);
-        });
+    it('markUpdateOperation switches to UPDATE', function () {
+        $ctx = Context::makeWithDefaults()->markCreateOperation()->markUpdateOperation();
+        expect($ctx->operation())->toBe(ContextOperation::UPDATE->value)
+            ->and($ctx->updateOperation())->toBeTrue()
+            ->and($ctx->createOperation())->toBeFalse();
     });
+});
 
-    describe('operation helpers', function () {
-        it('defaults to UPDATE on new contexts', function () {
-            $ctx = Context::makeWithDefaults(); // ctor marks UPDATE by default
-            expect($ctx->operation())->toBe(ContextOperation::UPDATE)
-                ->and($ctx->meta()->get('operation'))->toBe(ContextOperation::UPDATE);
-        });
+describe('toCollection / toArray and asCollection fallback', function () {
+    it('builds a full snapshot and falls back to empty collections for bad override types', function () {
+        // Non-array/collection override triggers asCollection() default branch → empty collect()
+        $ctx = Context::makeWithDefaults(['in' => 1], [
+            'params' => 'not-an-array',
+        ]);
 
-        it('markCreateOperation switches to CREATE', function () {
-            $ctx = Context::makeWithDefaults()->markCreateOperation();
-            expect($ctx->operation())->toBe(ContextOperation::CREATE)
-                ->and($ctx->createOperation())->toBeTrue()
-                ->and($ctx->updateOperation())->toBeFalse();
-        });
+        $bag = $ctx->toCollection();
+        $arr = $ctx->toArray();
 
-        it('markUpdateOperation switches to UPDATE', function () {
-            $ctx = Context::makeWithDefaults()->markCreateOperation()->markUpdateOperation();
-            expect($ctx->operation())->toBe(ContextOperation::UPDATE)
-                ->and($ctx->updateOperation())->toBeTrue()
-                ->and($ctx->createOperation())->toBeFalse();
-        });
+        // toArray mirrors toCollection()->toArray()
+        expect($arr)->toBe($bag->toArray());
 
-        it('withMeta merges alongside operation without coercing to string', function () {
-            $ctx = Context::makeWithDefaults()->markUpdateOperation();
-            $ctx->withMeta(['foo' => 'bar']);
-
-            expect($ctx->operation())->toBe(ContextOperation::UPDATE)
-                ->and($ctx->metaArray())->toMatchArray([
-                    'foo' => 'bar',
-                    'operation' => ContextOperation::UPDATE,
-                ]);
-        });
+        // Basic shape & values
+        expect($bag)->toBeInstanceOf(Collection::class)
+            ->and($bag->get('input'))->toBe(['in' => 1])
+            ->and($bag->get('params'))->toBe([])
+            ->and($bag->get('meta'))->toBe(['operation' => ContextOperation::UPDATE->value])
+            ->and($bag->get('errors'))->toBe([])
+            ->and($bag->get('resources'))->toBe([])
+            ->and($bag->get('errorInfo'))->toBeNull()
+            ->and($bag->get('organizer'))->toBeNull()
+            ->and($bag->get('action'))->toBeNull()
+            ->and($bag->get('status'))->toBe(ContextStatus::INCOMPLETE->name)
+            ->and($bag->get('aborted'))->toBeFalse()
+            ->and($bag->get('success'))->toBeTrue()
+            ->and($bag->get('failure'))->toBeFalse()
+            ->and($bag->get('operation'))->toBe(ContextOperation::UPDATE->value);
     });
 });

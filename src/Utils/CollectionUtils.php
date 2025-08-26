@@ -6,19 +6,27 @@ namespace Flowlight\Utils;
 
 use Illuminate\Support\Collection;
 
+/**
+ * CollectionUtils — tiny helpers for common immutable transforms.
+ *
+ * Notes
+ *  - Methods never mutate the provided Collections; they return new instances.
+ *  - “Compact” variants drop only nulls, preserving original ordering.
+ *  - De-duplication is strict (===) and keeps the first occurrence.
+ */
 final class CollectionUtils
 {
+    /** @codeCoverageIgnore */
     private function __construct() {}
 
     /**
-     * Concatenate values and drop only nulls, preserving order.
-     *
-     * Keys are re-indexed (0..n).
+     * Concatenate values and drop only nulls, preserving order (stable).
+     * Keys are re-indexed from 0..n.
      *
      * @template T
      *
-     * @param  Collection<array-key, T>  $base
-     * @param  iterable<array-key, T>  $values
+     * @param  Collection<array-key, T|null>  $base
+     * @param  iterable<array-key, T|null>  $values
      * @return Collection<int, T>
      */
     public static function concatCompact(Collection $base, iterable $values): Collection
@@ -33,8 +41,8 @@ final class CollectionUtils
     }
 
     /**
-     * Shallow merge attributes (map-style) without mutating the original.
-     * Later keys in $attrs overwrite $base keys.
+     * Shallow-merge attributes (map-style) without mutating the original.
+     * Later keys in $attrs overwrite keys in $base.
      *
      * @param  Collection<string, mixed>  $base
      * @param  array<string, mixed>|Collection<string, mixed>  $attrs
@@ -52,14 +60,13 @@ final class CollectionUtils
     }
 
     /**
-     * Concatenate values, drop nulls, and de-duplicate while keeping first occurrence.
-     *
-     * Keys are re-indexed (0..n).
+     * Concatenate, drop nulls, and de-duplicate (strict ===), keeping first occurrence.
+     * Keys are re-indexed from 0..n.
      *
      * @template T
      *
-     * @param  Collection<array-key, T>  $base
-     * @param  iterable<array-key, T>  $values
+     * @param  Collection<array-key, T|null>  $base
+     * @param  iterable<array-key, T|null>  $values
      * @return Collection<int, T>
      */
     public static function concatUniqueCompact(Collection $base, iterable $values): Collection

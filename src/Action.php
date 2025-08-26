@@ -7,57 +7,70 @@ namespace Flowlight;
 use Throwable;
 
 /**
- * Base Action with lifecycle hooks around a single unit of work.
+ * Base Action encapsulating a single unit of work with observable lifecycle hooks.
  *
- * Lifecycle:
- *  - beforeExecute($ctx)
- *  - perform($ctx)                        // implemented by concrete action
- *  - afterExecute($ctx)
- *  - afterSuccess($ctx) | afterFailure($ctx)  // based on $ctx->errors()->isEmpty()
+ * Lifecycle (when not already complete):
+ *  1) beforeExecute(Context): always invoked before perform()
+ *  2) perform(Context): does the work; may throw or mark Context as failed/aborted
+ *  3) afterExecute(Context): always invoked after perform(), even if perform() threw
+ *  4) afterSuccess(Context): invoked iff no errors and not aborted (and no exception)
+ *  5) afterFailure(Context): invoked iff perform() threw OR Context has errors/aborted
  *
- * Usage:
- *   final class TouchParamsAction extends Action
- *   {
- *       protected function perform(Context $ctx): void
- *       {
- *           $value = $ctx->input()->get('value');
- *           $ctx->withParams(['touched' => $value]);
- *       }
- *   }
+ * Short-circuit:
+ *  - If Context::isComplete() is true on entry, no hooks run and the Context is returned unchanged.
  *
- *   $ctx = TouchParamsAction::execute(['value' => 123]);
+ * Exceptions:
+ *  - If perform() throws, execute() rethrows after running afterExecute() and afterFailure().
+ *  - Callers (e.g., Organizers) are expected to translate thrown exceptions into contextual
+ *    failures rather than letting them bubble up the stack.
  *
  * @phpstan-consistent-constructor
  */
 abstract class Action
 {
-    /** @var null|callable(Context):void */
+    /**
+     * Hook executed immediately before perform().
+     *
+     * @var null|callable(Context):void
+     */
     protected static $beforeExecute = null;
 
-    /** @var null|callable(Context):void */
+    /**
+     * Hook executed immediately after perform() (runs for both success and failure, including throws).
+     *
+     * @var null|callable(Context):void
+     */
     protected static $afterExecute = null;
 
-    /** @var null|callable(Context):void */
+    /**
+     * Hook executed when the action completes without errors and is not aborted.
+     *
+     * @var null|callable(Context):void
+     */
     protected static $afterSuccess = null;
 
-    /** @var null|callable(Context):void */
+    /**
+     * Hook executed when perform() throws or the Context records errors/abort.
+     *
+     * @var null|callable(Context):void
+     */
     protected static $afterFailure = null;
 
     protected Context $context;
 
     /**
-     * Construct an Action with a Context (or array payload to initialize one).
+     * Construct an Action with an existing Context or initial parameters.
+     *
+     * If an array is provided, a Context is created via Context::makeWithDefaults($params).
+     * The constructed Context is tagged with the invoked Action and current Action class.
      *
      * @param  Context|array<string,mixed>  $context
      */
     public function __construct(Context|array $context = [])
     {
-        if ($context instanceof Context) {
-            $this->context = $context;
-        } else {
-            /** @var array<string,mixed> $context */
-            $this->context = Context::makeWithDefaults($context);
-        }
+        $this->context = $context instanceof Context
+            ? $context
+            : Context::makeWithDefaults($context);
 
         $this->context
             ->withInvokedAction($this)
@@ -65,39 +78,56 @@ abstract class Action
     }
 
     /**
-     * Execute this action with lifecycle hooks applied and return the (mutated) Context.
+     * Execute the Action and return the (possibly mutated) Context.
      *
-     * @param  Context|array<string,mixed>  $context
+     * Behavior:
+     *  - If Context::isComplete() is true, returns immediately (no hooks executed).
+     *  - Invokes beforeExecute(), then perform().
+     *  - Always invokes afterExecute() once perform() returns or throws.
+     *  - Invokes afterSuccess() when no errors and not aborted; otherwise afterFailure().
      *
-     * @throws Throwable
+     * @param  Context|array<string,mixed>  $context  Existing Context or initial params
+     * @return Context The resulting Context after execution
+     *
+     * @throws Throwable If perform() throws; hooks afterExecute() and afterFailure() still run first.
      */
     public static function execute(Context|array $context = []): Context
     {
-        // safe with @phpstan-consistent-constructor
+        /** @phpstan-var static $action */
         $action = new static($context);
         $ctx = $action->context;
+
+        // Short-circuit if already complete (no hooks)
+        if ($ctx->isComplete()) {
+            return $ctx;
+        }
 
         if (is_callable(static::$beforeExecute)) {
             (static::$beforeExecute)($ctx);
         }
 
         try {
+            // Run the unit of work
             $action->perform($ctx);
         } catch (Throwable $e) {
+            // Ensure hooks run for observability/metrics before rethrowing
             if (is_callable(static::$afterExecute)) {
                 (static::$afterExecute)($ctx);
             }
             if (is_callable(static::$afterFailure)) {
                 (static::$afterFailure)($ctx);
             }
+
+            // Upstream orchestration should convert this into a contextual failure.
             throw $e;
         }
 
+        // Post-perform hooks when no exception occurred
         if (is_callable(static::$afterExecute)) {
             (static::$afterExecute)($ctx);
         }
 
-        $isSuccess = $ctx->errors()->isEmpty();
+        $isSuccess = $ctx->errors()->isEmpty() && (! $ctx->aborted());
 
         if ($isSuccess) {
             if (is_callable(static::$afterSuccess)) {
@@ -113,6 +143,8 @@ abstract class Action
     }
 
     /**
+     * Register a global 'before execute' hook for this Action class.
+     *
      * @param  callable(Context):void  $fn
      */
     public static function setBeforeExecute(callable $fn): void
@@ -121,6 +153,8 @@ abstract class Action
     }
 
     /**
+     * Register a global 'after execute' hook for this Action class.
+     *
      * @param  callable(Context):void  $fn
      */
     public static function setAfterExecute(callable $fn): void
@@ -129,6 +163,8 @@ abstract class Action
     }
 
     /**
+     * Register a global 'after success' hook for this Action class.
+     *
      * @param  callable(Context):void  $fn
      */
     public static function setAfterSuccess(callable $fn): void
@@ -137,6 +173,8 @@ abstract class Action
     }
 
     /**
+     * Register a global 'after failure' hook for this Action class.
+     *
      * @param  callable(Context):void  $fn
      */
     public static function setAfterFailure(callable $fn): void
@@ -145,7 +183,7 @@ abstract class Action
     }
 
     /**
-     * Getters for tests/introspection.
+     * Retrieve the currently registered 'before execute' hook (if any).
      *
      * @return null|callable(Context):void
      */
@@ -154,26 +192,43 @@ abstract class Action
         return static::$beforeExecute;
     }
 
-    /** @return null|callable(Context):void */
+    /**
+     * Retrieve the currently registered 'after execute' hook (if any).
+     *
+     * @return null|callable(Context):void
+     */
     public static function afterExecuteBlock(): ?callable
     {
         return static::$afterExecute;
     }
 
-    /** @return null|callable(Context):void */
+    /**
+     * Retrieve the currently registered 'after success' hook (if any).
+     *
+     * @return null|callable(Context):void
+     */
     public static function afterSuccessBlock(): ?callable
     {
         return static::$afterSuccess;
     }
 
-    /** @return null|callable(Context):void */
+    /**
+     * Retrieve the currently registered 'after failure' hook (if any).
+     *
+     * @return null|callable(Context):void
+     */
     public static function afterFailureBlock(): ?callable
     {
         return static::$afterFailure;
     }
 
     /**
-     * Implement your action’s business logic here.
+     * Implement the unit of work. Implementations should:
+     *  - Mutate the Context (e.g., resources, params, errors) as needed.
+     *  - Mark completion/abortion on the Context as appropriate.
+     *  - Throw only for unexpected/exceptional conditions; expected failures should be
+     *    recorded on the Context (errors/abort), allowing execute() to invoke afterFailure()
+     *    without raising.
      */
     abstract protected function perform(Context $context): void;
 }

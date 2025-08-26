@@ -57,8 +57,8 @@
     "scripts": {
         "ci": "make ci",
         "install:all": "make install",
-        "test": "./vendor/bin/pest",
-        "test:coverage": "make coverage",
+        "test": "php -d memory_limit=2048M ./vendor/bin/pest",
+        "test:coverage": "php -d memory_limit=2048M -dxdebug.mode=coverage ./vendor/bin/pest --coverage --coverage-clover=coverage.xml --coverage-html=coverage-html",
         "coverage:show": "make coverage-show",
         "lint": "make lint",
         "format": "make static-codestyle-fix",

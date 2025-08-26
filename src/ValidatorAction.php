@@ -6,23 +6,50 @@ namespace Flowlight;
 
 use Flowlight\Utils\LangUtils;
 use Illuminate\Support\Collection;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
+/**
+ * ValidatorAction — Action with schema-driven validation and optional mappers.
+ *
+ * Responsibilities
+ *  - Require a DTO class (extending BaseData) via dataClass().
+ *  - Optionally transform input before validation (beforeValidationMapper()).
+ *  - Validate using BaseData::validatorForPayload() honoring Context operation (create/update)
+ *    and extraRules from $context->extraRules().
+ *  - On failure: merge validator errors into Context (withErrors) and return (no throw).
+ *  - On success: merge validated + (possibly mapped) params into Context via withParams().
+ *
+ * Mappers
+ *  - beforeValidationMapper():   maps raw Context input → array|Collection (pre-validation shape).
+ *  - afterValidationMapper():    maps merged (raw+validated) params → array|Collection (post-validation shape).
+ *  - Each mapper may be:
+ *      * null (no-op; input/result must already be array|Collection),
+ *      * callable(mixed $data): array|Collection,
+ *      * class-string with static mapFrom(mixed $data): array|Collection.
+ *
+ * Operations
+ *  - Use executeForCreateOperation()/executeForUpdateOperation() helpers to set meta['operation'] first,
+ *    or ensure Context already carries the intended operation.
+ *
+ * Exceptions
+ *  - perform() does not throw for validation failures—it records errors on the Context.
+ *  - Misconfiguration (bad dataClass/mapper types) raises RuntimeException.
+ *  - Action::execute() will still surface unexpected Throwables per its lifecycle.
+ */
 abstract class ValidatorAction extends Action
 {
     /**
-     * Subclasses MUST provide a DTO class-string extending BaseDto.
+     * Subclasses MUST provide a DTO class-string extending BaseData.
      *
-     * @return class-string<BaseDto>
+     * @return class-string<BaseData>
      */
-    abstract protected static function dtoClass(): string;
+    abstract protected static function dataClass(): string;
 
     /**
-     * Optional mapper before validation.
-     * Return:
-     *  - null (no-op)
-     *  - callable(mixed $data): array|Collection
-     *  - class-string with static mapFrom(mixed $data): array|Collection
+     * Optional mapper invoked BEFORE validation to reshape input.
+     *
+     * @phpstan-return (callable(mixed):mixed)|class-string|null
      */
     protected static function beforeValidationMapper(): callable|string|null
     {
@@ -30,11 +57,9 @@ abstract class ValidatorAction extends Action
     }
 
     /**
-     * Optional mapper after validation.
-     * Return:
-     *  - null (no-op)
-     *  - callable(mixed $data): array|Collection
-     *  - class-string with static mapFrom(mixed $data): array|Collection
+     * Optional mapper invoked AFTER validation to finalize params written to Context.
+     *
+     * @phpstan-return (callable(mixed):mixed)|class-string|null
      */
     protected static function afterValidationMapper(): callable|string|null
     {
@@ -42,7 +67,9 @@ abstract class ValidatorAction extends Action
     }
 
     /**
-     * @throws Throwable
+     * Execute with meta['operation']='create'.
+     *
+     * @throws Throwable Per Action::execute semantics if an unexpected exception occurs.
      */
     public static function executeForCreateOperation(Context $ctx): Context
     {
@@ -50,31 +77,55 @@ abstract class ValidatorAction extends Action
     }
 
     /**
-     * @throws Throwable
+     * Execute with meta['operation']='update'.
+     *
+     * @throws Throwable Per Action::execute semantics if an unexpected exception occurs.
      */
     public static function executeForUpdateOperation(Context $ctx): Context
     {
         return static::execute($ctx->markUpdateOperation());
     }
 
-    /** {@inheritDoc} */
+    /**
+     * Perform validation and parameter mapping.
+     *
+     * Flow:
+     *  1) Resolve dataClass() and assert it extends BaseData.
+     *  2) Apply beforeValidationMapper() to Context input (must yield array|Collection).
+     *  3) Build validator via BaseData::validatorForPayload(payload, extraRules, operation).
+     *  4) If fails → withErrors($errors) and return (no exception).
+     *  5) If passes → merge validated with pre-validation base and apply afterValidationMapper();
+     *     then write to Context via withParams().
+     *
+     * Validation failures:
+     *  - Recorded as Context errors (ctx->withErrors()); caller can check ctx->failure()/errors().
+     *
+     * {@inheritDoc}
+     *
+     * @throws ValidationException Only if surfaced by the underlying validator in unexpected ways.
+     */
     protected function perform(Context $context): void
     {
-        $dtoClass = static::dtoClass();
+        $dataClass = static::dataClass();
 
-        if (! LangUtils::matchesClass($dtoClass, BaseDto::class)) {
-            throw new \RuntimeException('dtoClass() must return a class-string<BaseDto>.');
+        if (! LangUtils::matchesClass($dataClass, BaseData::class)) {
+            throw new \RuntimeException('dataClass() must return a class-string<BaseDto>.');
         }
 
         $mappedInput = self::applyMapperExpectMap(static::beforeValidationMapper(), $context->inputArray());
 
-        /** @var class-string<BaseDto> $dtoClass */
-        $validator = $dtoClass::validatorForPayload($mappedInput, $context);
+        /** @var class-string<BaseData> $dataClass */
+        $validator = $dataClass::validatorForPayload(
+            payload: $mappedInput,
+            /** @phpstan-ignore-next-line */
+            extraRules: $context->extraRules(),
+            operation: $context->operation(),
+        );
 
         if ($validator->fails()) {
             /** @var array<string, array<int, string>> $errors */
             $errors = $validator->errors()->toArray();
-            $context->withErrors($errors)->markFailed();
+            $context->withErrors($errors);
 
             return;
         }
@@ -89,10 +140,16 @@ abstract class ValidatorAction extends Action
     }
 
     /**
-     * Apply a mapper and REQUIRE it to return array|Collection.
+     * Apply a mapper and REQUIRE an array|Collection result.
      *
-     * @param  callable|string|null  $mapper  callable(mixed): array|Collection OR class-string::mapFrom(mixed): array|Collection
+     * Accepted forms for $mapper:
+     *  - null → identity (input must already be array|Collection),
+     *  - callable(mixed): array|Collection,
+     *  - class-string with static mapFrom(mixed): array|Collection.
+     *
      * @return array<string,mixed>|Collection<string,mixed>
+     *
+     * @throws \RuntimeException If mapper is invalid or result is not array|Collection.
      */
     private static function applyMapperExpectMap(callable|string|null $mapper, mixed $data): array|Collection
     {

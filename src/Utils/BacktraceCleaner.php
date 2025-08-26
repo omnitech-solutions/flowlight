@@ -8,27 +8,50 @@ use Illuminate\Support\Collection;
 use Throwable;
 
 /**
- * BacktraceClear — minimal backtrace cleaner inspired by ActiveSupport::BacktraceCleaner.
+ * BacktraceCleaner — minimal backtrace cleaner inspired by ActiveSupport::BacktraceCleaner.
  *
- * Filters transform lines; silencers remove them.
+ * Concepts
+ *  - Filters: transform each trace line (e.g., strip project root prefixes).
+ *  - Silencers: predicate functions that remove lines (e.g., vendor frames).
  *
- * Usage:
- *   $cleaner = new BacktraceClear();
- *   $root = base_path() . DIRECTORY_SEPARATOR;
- *   $cleaner->addFilter(fn(string $line): string => str_replace($root, '', $line))
- *           ->addSilencer(fn(string $line): bool => str_contains($line, DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR));
- *   $clean = $cleaner->clean($exception); // -> Collection<int, string>
+ * Usage
+ *  ```php
+ *  $cleaner = new BacktraceCleaner();
+ *  $root = base_path() . DIRECTORY_SEPARATOR;
+ *  $cleaner
+ *    ->addFilter(fn(string $line): string => str_replace($root, '', $line))
+ *    ->addSilencer(fn(string $line): bool => str_contains($line, DIRECTORY_SEPARATOR.'vendor'.DIRECTORY_SEPARATOR));
+ *  $clean = $cleaner->cleanBacktrace($exception); // Collection<int, string>
+ *  ```
+ *
+ * Static convenience
+ *  ```php
+ *  $clean = BacktraceCleaner::clean($exception, function (BacktraceCleaner $bc): void {
+ *      $bc->removeSilencers(); // show everything
+ *  });
+ *  ```
+ *
+ * Kinds
+ *  - KIND_SILENT: hide silenced lines (default).
+ *  - KIND_NOISE: show only silenced lines (useful for debugging silencers).
+ *  - Any other value: show all lines after filters.
+ *
+ * @phpstan-type BacktraceInput Throwable|string|array<int,string>|Collection<int,string>
+ * @phpstan-type Filter callable(string):string
+ * @phpstan-type Silencer callable(string):bool
  */
 final class BacktraceCleaner
 {
+    /** Show non-silenced frames (default). */
     public const string KIND_SILENT = 'silent';
 
+    /** Show only silenced frames (inverse view). */
     public const string KIND_NOISE = 'noise';
 
-    /** @var Collection<int, callable(string): string> */
+    /** @var Collection<int, callable(string): string> Filters applied in order to each line. */
     private Collection $filters;
 
-    /** @var Collection<int, callable(string): bool> */
+    /** @var Collection<int, callable(string): bool> Silencers evaluated against each (filtered) line. */
     private Collection $silencers;
 
     public function __construct()
@@ -42,7 +65,12 @@ final class BacktraceCleaner
         );
     }
 
-    /** Add a filter (transforms lines). */
+    /**
+     * Add a filter (line transformer).
+     *
+     * @param  callable(string):string  $filter
+     * @return $this
+     */
     public function addFilter(callable $filter): self
     {
         $this->filters->push($filter);
@@ -50,7 +78,12 @@ final class BacktraceCleaner
         return $this;
     }
 
-    /** Add a silencer (removes matching lines). */
+    /**
+     * Add a silencer (line predicate to remove matches).
+     *
+     * @param  callable(string):bool  $silencer
+     * @return $this
+     */
     public function addSilencer(callable $silencer): self
     {
         $this->silencers->push($silencer);
@@ -58,7 +91,11 @@ final class BacktraceCleaner
         return $this;
     }
 
-    /** Remove all silencers (show everything). */
+    /**
+     * Remove all silencers (show everything).
+     *
+     * @return $this
+     */
     public function removeSilencers(): self
     {
         $this->silencers = collect();
@@ -66,7 +103,11 @@ final class BacktraceCleaner
         return $this;
     }
 
-    /** Remove all filters (keep raw frames). */
+    /**
+     * Remove all filters (keep raw frames).
+     *
+     * @return $this
+     */
     public function removeFilters(): self
     {
         $this->filters = collect();
@@ -75,10 +116,11 @@ final class BacktraceCleaner
     }
 
     /**
-     * Clean a backtrace.
+     * Clean a backtrace-like input.
      *
-     * @param  Throwable|string|array<int,string>|Collection<int,string>  $backtrace
-     * @return Collection<int,string>
+     * @param  Throwable|string|array<int,string>|Collection<int,string>  $backtrace  Exception or list/blob of frames
+     * @param  string  $kind  One of self::KIND_* (see class doc)
+     * @return Collection<int,string> Filtered (and possibly silenced) lines
      */
     public function cleanBacktrace(Throwable|string|array|Collection $backtrace, string $kind = self::KIND_SILENT): Collection
     {
@@ -109,7 +151,9 @@ final class BacktraceCleaner
     }
 
     /**
-     * Clean a single frame; returns null if silenced under :silent mode.
+     * Clean a single frame; returns null if silenced under KIND_SILENT.
+     *
+     * @param  string  $kind  One of self::KIND_*; non-matching values return the reduced frame
      */
     public function cleanFrame(string $frame, string $kind = self::KIND_SILENT): ?string
     {
@@ -127,11 +171,11 @@ final class BacktraceCleaner
     }
 
     /**
-     * Static convenience:
-     *   BacktraceClear::clean($e, function (BacktraceClear $bc) {...});
+     * Static convenience wrapper.
      *
-     * @param  Throwable|string|array<int,string>|Collection<int,string>  $backtrace
-     * @param  null|callable(BacktraceCleaner):void  $configure
+     * @param  Throwable|string|array<int,string>|Collection<int,string>  $backtrace  Exception or frames
+     * @param  null|callable(BacktraceCleaner):void  $configure  Optional customizer (filters/silencers)
+     * @param  string  $kind  One of self::KIND_* (default silent)
      * @return Collection<int,string>
      */
     public static function clean(Throwable|string|array|Collection $backtrace, ?callable $configure = null, string $kind = self::KIND_SILENT): Collection
@@ -147,7 +191,13 @@ final class BacktraceCleaner
     // ── Internals ────────────────────────────────────────────────────────────────
 
     /**
-     * Normalize input into a collection of strings.
+     * Normalize input into a Collection of non-empty strings.
+     *
+     * Accepted forms:
+     *  - Throwable  → Throwable::getTraceAsString() exploded by newlines
+     *  - string     → split on newlines
+     *  - array      → cast each to string
+     *  - Collection → cast each to string
      *
      * @param  Throwable|string|array<int,string>|Collection<int,string>  $input
      * @return Collection<int,string>
@@ -175,6 +225,9 @@ final class BacktraceCleaner
             ->values();
     }
 
+    /**
+     * Determine if a line should be silenced by any registered silencer.
+     */
     private function isSilenced(string $line): bool
     {
         return $this->silencers->contains(

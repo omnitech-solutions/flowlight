@@ -4,30 +4,43 @@ declare(strict_types=1);
 
 namespace Flowlight;
 
-use Throwable;
+use Flowlight\Traits\WithErrorHandler;
 
 /**
- * Organizer — run a sequence of steps (Actions or callables) with a shared Context.
+ * Organizer — runs an ordered sequence of steps (Actions or callables) against a shared Context.
+ *
+ * Responsibilities
+ *  - Construct a Context (with optional overrides), set organizer metadata, and execute steps in order.
+ *  - Support both Action class-strings (invoked via Action::execute) and callable(Context): void steps.
+ *  - Provide reduceIfSuccess() to conditionally continue only on success.
+ *  - Capture failures mid-stream (records last failed snapshot) and stop further execution.
+ *  - Mark the Context COMPLETE only when no errors/abortions are present.
+ *
+ * Error handling
+ *  - call() wraps execution in WithErrorHandler::withErrorHandler(), allowing upstream conversion
+ *    of thrown exceptions into contextual failures (ctx->withErrors()/abort()).
  *
  * Usage:
- *   final class MyFlow extends Organizer
- *   {
- *       protected static function steps(): array
- *       {
- *           return [
- *               DoThingAction::class,
- *               fn (Context $ctx) => $ctx->withMeta(['ran' => true]),
- *           ];
- *       }
+ *   final class MyFlow extends Organizer {
+ *     protected static function steps(): array {
+ *       return [
+ *         DoThingAction::class,
+ *         static function (Context $ctx): void { $ctx->withMeta(['ran' => true]); },
+ *       ];
+ *     }
  *   }
  *
  *   $ctx = MyFlow::call(['input_key' => 'value']);
  */
 abstract class Organizer
 {
+    use WithErrorHandler;
+
     /**
-     * Subclasses should override with a list of steps (class-strings of Actions or callables).
-     * Kept non-abstract so anonymous organizers can be defined in tests; ::call() will enforce non-empty.
+     * Declare the ordered list of steps (Action class-strings or callable(Context): void).
+     *
+     * Non-abstract so tests can define anonymous organizers easily; ::call() and ::reduce()
+     * handle empty lists and append a terminal marker step internally.
      *
      * @return array<int, callable(Context):void|string>
      */
@@ -37,21 +50,31 @@ abstract class Organizer
     }
 
     /**
-     * Build a Context, set organizer metadata, run steps (plus terminal step), and return the resulting Context.
+     * Build a Context, optionally transform it, then run steps (plus terminal marker) and return the Context.
      *
-     * @param  array<string,mixed>  $input
-     * @param  array<string,mixed>  $overrides
+     * Flow:
+     *  1) Context::makeWithDefaults($input, $overrides) → setCurrentOrganizer(static::class)
+     *  2) If $transformContext is callable, invoke it BEFORE any steps run.
+     *  3) withErrorHandler($ctx, fn => reduce($ctx, allSteps()))
+     *  4) If $ctx->success(), markComplete(); otherwise leave INCOMPLETE.
+     *
+     * @param  array<string,mixed>  $input  Initial inputs
+     * @param  array<string,mixed>  $overrides  Whitelisted collection seeds (params, errors, resource, etc.)
+     * @param  null|callable(Context):void  $transformContext  Pre-execution hook to mutate Context
      */
-    public static function call(array $input = [], array $overrides = []): Context
+    public static function call(array $input = [], array $overrides = [], ?callable $transformContext = null): Context
     {
         $ctx = Context::makeWithDefaults($input, $overrides)->setCurrentOrganizer(static::class);
 
-        try {
-            static::reduce($ctx, self::allSteps());
-        } catch (Throwable $e) {
-            static::withErrorHandler($ctx, $e);
+        if (is_callable($transformContext)) {
+            $transformContext($ctx); // runs before steps (asserted in tests)
         }
 
+        self::withErrorHandler($ctx, function (Context $ctx): void {
+            static::reduce($ctx, self::allSteps());
+        });
+
+        // Do NOT mark complete on failure — tests assert this behavior
         if ($ctx->success()) {
             $ctx->markComplete();
         }
@@ -60,7 +83,7 @@ abstract class Organizer
     }
 
     /**
-     * Run steps only if the context is currently successful and has no errors.
+     * Run the provided steps only if the Context is currently successful (no errors/aborted).
      *
      * @param  array<int, callable(Context):void|string>  $steps
      */
@@ -74,17 +97,24 @@ abstract class Organizer
     }
 
     /**
-     * Execute steps in order; a step can be an Action class-string (exposes ::execute) or a callable(Context): void.
+     * Execute steps in order. Each step is either:
+     *  - class-string<Action>: sets current action and calls Action::execute($ctx)
+     *  - callable(Context):void: sets current action label then invokes the callable
+     *
+     * Behavior:
+     *  - After each step, if ctx has errors or failure() is true, record lastFailedContext and stop.
+     *  - Otherwise record the step label via addSuccessfulAction().
      *
      * @param  array<int, callable(Context):void|string>  $steps
+     *
+     * @throws \RuntimeException If a step is neither an Action class-string nor a callable(Context): void
      */
-    // in src/Organizer.php, inside protected static function reduce(Context $ctx, array $steps): void
     protected static function reduce(Context $ctx, array $steps): void
     {
         foreach ($steps as $step) {
             if (\is_string($step)) {
-                $ctx->setCurrentAction($step);
                 /** @var class-string<Action> $step */
+                $ctx->setCurrentAction($step);
                 $label = $step;
                 $step::execute($ctx);
             } elseif (\is_callable($step)) {
@@ -92,6 +122,7 @@ abstract class Organizer
                 $label = $ctx->actionName() ?? 'callable';
                 $step($ctx);
             } else {
+                // clear message that tests assert contains "Action class-string"
                 throw new \RuntimeException('Step is neither an Action class-string nor a callable(Context): void');
             }
 
@@ -104,15 +135,8 @@ abstract class Organizer
         }
     }
 
-    protected static function withErrorHandler(Context $ctx, Throwable $e): void
-    {
-        $ctx->recordRaisedError($e);
-        $ctx->withErrors(['base' => [$e->getMessage()]]);
-        $ctx->setLastFailedContext($ctx);
-    }
-
     /**
-     * The complete list of steps to run: declared steps plus a terminal “AllActionsComplete” step.
+     * Combine declared steps() with a terminal marker step (sets meta['all_actions_complete']=true).
      *
      * @return array<int, callable(Context):void|string>
      */

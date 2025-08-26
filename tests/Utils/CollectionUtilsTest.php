@@ -6,68 +6,66 @@ namespace Tests\Utils;
 
 use Flowlight\Utils\CollectionUtils;
 
-describe(CollectionUtils::class, function () {
-    describe('concatCompact()', function () {
-        it('concatenates and removes only nulls, preserving order', function () {
-            $base = collect([1, null, 2]);
-            $added = [null, 0, '', false, 3];
+describe('concatCompact()', function () {
+    it('concatenates and removes only nulls, preserving order', function () {
+        $base = collect([1, null, 2]);
+        $added = [null, 0, '', false, 3];
 
-            $out = CollectionUtils::concatCompact($base, $added);
+        $out = CollectionUtils::concatCompact($base, $added);
 
-            expect($out->all())->toBe([1, 2, 0, '', false, 3])
-                ->and($base->all())->toBe([1, null, 2]);
-        });
-
-        it('works with empty inputs', function () {
-            $out = CollectionUtils::concatCompact(collect(), []);
-            expect($out->all())->toBe([]);
-        });
+        expect($out->all())->toBe([1, 2, 0, '', false, 3])
+            ->and($base->all())->toBe([1, null, 2]);
     });
 
-    describe('mergeAttrs()', function () {
-        it('shallow merges arrays with later keys overriding', function () {
-            $base = collect(['a' => 1, 'b' => 2]);
-            $attrs = ['b' => 20, 'c' => 3];
+    it('works with empty inputs', function () {
+        $out = CollectionUtils::concatCompact(collect(), []);
+        expect($out->all())->toBe([]);
+    });
+});
 
-            $out = CollectionUtils::mergeAttrs($base, $attrs);
+describe('mergeAttrs()', function () {
+    it('shallow merges arrays with later keys overriding', function () {
+        $base = collect(['a' => 1, 'b' => 2]);
+        $attrs = ['b' => 20, 'c' => 3];
 
-            expect($out->all())->toBe(['a' => 1, 'b' => 20, 'c' => 3])
-                ->and($base->all())->toBe(['a' => 1, 'b' => 2]);
-        });
+        $out = CollectionUtils::mergeAttrs($base, $attrs);
 
-        it('accepts Collection for attrs', function () {
-            $base = collect(['x' => 1]);
-            $attrs = collect(['y' => 2]);
-
-            $out = CollectionUtils::mergeAttrs($base, $attrs);
-            expect($out->all())->toBe(['x' => 1, 'y' => 2]);
-        });
-
-        it('handles empty attrs gracefully', function () {
-            $base = collect(['k' => 'v']);
-            $out = CollectionUtils::mergeAttrs($base, []);
-            expect($out->all())->toBe(['k' => 'v']);
-        });
+        expect($out->all())->toBe(['a' => 1, 'b' => 20, 'c' => 3])
+            ->and($base->all())->toBe(['a' => 1, 'b' => 2]);
     });
 
-    describe('concatUniqueCompact()', function () {
-        it('concatenates, removes nulls, and de-duplicates keeping first occurrence', function () {
-            $base = collect(['a', 'b', null, 'a']);
-            $more = [null, 'b', 'c', 'a'];
+    it('accepts Collection for attrs', function () {
+        $base = collect(['x' => 1]);
+        $attrs = collect(['y' => 2]);
 
-            $out = CollectionUtils::concatUniqueCompact($base, $more);
+        $out = CollectionUtils::mergeAttrs($base, $attrs);
+        expect($out->all())->toBe(['x' => 1, 'y' => 2]);
+    });
 
-            expect($out->all())->toBe(['a', 'b', 'c'])
-                ->and($base->all())->toBe(['a', 'b', null, 'a']);
-        });
+    it('handles empty attrs gracefully', function () {
+        $base = collect(['k' => 'v']);
+        $out = CollectionUtils::mergeAttrs($base, []);
+        expect($out->all())->toBe(['k' => 'v']);
+    });
+});
 
-        it('preserves falsy non-null values and removes only nulls', function () {
-            $base = collect([0, false, '', null]);
-            $more = [null, 0, false, ''];
+describe('concatUniqueCompact()', function () {
+    it('concatenates, removes nulls, and de-duplicates keeping first occurrence', function () {
+        $base = collect(['a', 'b', null, 'a']);
+        $more = [null, 'b', 'c', 'a'];
 
-            $out = CollectionUtils::concatUniqueCompact($base, $more);
+        $out = CollectionUtils::concatUniqueCompact($base, $more);
 
-            expect($out->all())->toBe([0, false, '']);
-        });
+        expect($out->all())->toBe(['a', 'b', 'c'])
+            ->and($base->all())->toBe(['a', 'b', null, 'a']);
+    });
+
+    it('preserves falsy non-null values and removes only nulls', function () {
+        $base = collect([0, false, '', null]);
+        $more = [null, 0, false, ''];
+
+        $out = CollectionUtils::concatUniqueCompact($base, $more);
+
+        expect($out->all())->toBe([0, false, '']);
     });
 });

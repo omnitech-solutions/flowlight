@@ -9,7 +9,7 @@ use Flowlight\Context;
 use Flowlight\Organizer;
 use Flowlight\Utils\LangUtils;
 
-describe(LangUtils::class, function () {
+describe('matchesClass', function () {
     // Local fixtures
     $Base = new class extends Action
     {

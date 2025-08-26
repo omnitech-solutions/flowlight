@@ -10,19 +10,32 @@ use Illuminate\Validation\ValidationException;
 use Throwable;
 
 /**
- * Wraps a Throwable with structured, typed error information and
- * a cleaned backtrace powered by BacktraceClear.
+ * ErrorInfo — lightweight wrapper around a Throwable with structured fields and cleaned backtraces.
+ *
+ * Responsibilities
+ *  - Normalize exception metadata for logs/UI: type, message, title.
+ *  - Provide a standardized error map (field → list of messages), with native support
+ *    for Laravel's ValidationException.
+ *  - Produce cleaned backtraces via BacktraceCleaner for more readable diagnostics.
  */
 final readonly class ErrorInfo
 {
+    /** The original error that was captured. */
     public Throwable $error;
 
+    /** Fully-qualified exception class name. */
     public string $type;
 
+    /** Human-readable message; may be overridden via constructor. */
     public string $message;
 
+    /** Concise title combining type and original exception message. */
     public string $title;
 
+    /**
+     * @param  Throwable  $error  The exception to wrap.
+     * @param  ?string  $message  Optional override for the displayed message (defaults to $error->getMessage()).
+     */
     public function __construct(Throwable $error, ?string $message = null)
     {
         $this->error = $error;
@@ -31,6 +44,9 @@ final readonly class ErrorInfo
         $this->title = sprintf('%s : %s', $this->type, $error->getMessage());
     }
 
+    /**
+     * Render a multi-line summary suitable for logs or diagnostics with a cleaned backtrace.
+     */
     public function errorSummary(): string
     {
         $trace = $this->cleanBacktrace()->implode("\n");
@@ -46,7 +62,11 @@ TEXT;
     }
 
     /**
-     * Return a standardized error-map as a Collection.
+     * Return a standardized error map.
+     *
+     * - If the underlying error is a ValidationException, returns its native
+     *   array<string, array<int, string>> as a Collection.
+     * - Otherwise returns a fallback shape: ['base' => [<message>]].
      *
      * @return Collection<string, array<int,string>>
      */
@@ -71,9 +91,13 @@ TEXT;
     }
 
     /**
-     * Structured error info for logs/UI.
+     * Structured error info for logs/UI (truncated cleaned backtrace).
      *
-     * Keys: "type" (string), "message" (?string), "exception" (string), "backtrace" (string).
+     * Keys:
+     *  - type: string (FQCN of the exception)
+     *  - message: string (possibly overridden)
+     *  - exception: string (title combining type and original message)
+     *  - backtrace: string (first 5 lines of the cleaned backtrace, newline-separated)
      *
      * @return Collection<string, mixed>
      */
@@ -88,7 +112,7 @@ TEXT;
     }
 
     /**
-     * Raw backtrace lines.
+     * Raw backtrace lines from Throwable::getTraceAsString(), split and normalized.
      *
      * @return Collection<int,string>
      */
@@ -101,7 +125,7 @@ TEXT;
     }
 
     /**
-     * Cleaned backtrace using BacktraceClear.
+     * Cleaned backtrace using BacktraceCleaner to remove framework noise and improve readability.
      *
      * @return Collection<int,string>
      */
