@@ -119,6 +119,7 @@ abstract class ValidatorAction extends Action
             payload: $mappedInput,
             /** @phpstan-ignore-next-line */
             extraRules: $context->extraRules(),
+            dottedOmitRules: $context->dottedOmitRulesArray(),
             operation: $context->operation(),
         );
 

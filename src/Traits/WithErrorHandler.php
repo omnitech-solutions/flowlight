@@ -49,7 +49,7 @@ trait WithErrorHandler
     private static function captureExceptionIntoContext(Context $ctx, Throwable $e): void
     {
         $ctx->recordRaisedError($e);
-        $ctx->withErrors(['base' => [$e->getMessage()]]);
+        $ctx->withErrors(['base' => ['An unexpected error occurred.']]);
         $ctx->setLastFailedContext($ctx);
         $ctx->abort();
     }

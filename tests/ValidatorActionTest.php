@@ -591,35 +591,53 @@ describe('execute', function () {
 });
 
 describe('executeForCreateOperation', function () {
-    it('keeps id/uuid rules for CREATE (fails on missing/invalid)', function () {
+    it('drops id/uuid rules for CREATE (passes without them)', function () {
         $idUuidDto = makeIdUuidDtoClass();
         $actionObj = makeAnonActionWithDto($idUuidDto);
 
-        // No id/uuid in input → should fail under CREATE
+        // No id/uuid in input → should PASS under CREATE
         $ctx = Context::makeWithDefaults(['something' => 1]);
 
+        /** @var Context $out */
         $out = $actionObj::class::executeForCreateOperation($ctx);
-        /** @var Context $out */
-        $errors = $out->errorsArray();
-        expect($out->failure())->toBeTrue()
-            ->and(array_key_exists('id', $errors))->toBeTrue()
-            ->and(array_key_exists('uuid', $errors))->toBeTrue();
-    });
-});
-
-describe('executeForUpdateOperation', function () {
-    it('drops id/uuid rules for UPDATE (passes without them)', function () {
-        $idUuidDto = makeIdUuidDtoClass();
-        $actionObj = makeAnonActionWithDto($idUuidDto);
-
-        $ctx = Context::makeWithDefaults(['something' => 1]);
-
-        $out = $actionObj::class::executeForUpdateOperation($ctx);
-        /** @var Context $out */
         $errors = $out->errorsArray();
 
         expect($out->success())->toBeTrue()
             ->and(array_key_exists('id', $errors))->toBeFalse()
             ->and(array_key_exists('uuid', $errors))->toBeFalse();
+    });
+});
+
+describe('executeForUpdateOperation', function () {
+    it('keeps id/uuid rules for UPDATE (fails when missing)', function () {
+        $idUuidDto = makeIdUuidDtoClass();
+        $actionObj = makeAnonActionWithDto($idUuidDto);
+
+        // No id/uuid in input → should FAIL under UPDATE
+        $ctx = Context::makeWithDefaults(['something' => 1]);
+
+        /** @var Context $out */
+        $out = $actionObj::class::executeForUpdateOperation($ctx);
+        $errors = $out->errorsArray();
+
+        expect($out->failure())->toBeTrue()
+            ->and(array_key_exists('id', $errors))->toBeTrue()
+            ->and(array_key_exists('uuid', $errors))->toBeTrue();
+    });
+
+    it('passes UPDATE when id/uuid are provided', function () {
+        $idUuidDto = makeIdUuidDtoClass();
+        $actionObj = makeAnonActionWithDto($idUuidDto);
+
+        $ctx = Context::makeWithDefaults([
+            'id' => 7,
+            'uuid' => '11111111-2222-3333-4444-555555555555',
+        ]);
+
+        /** @var Context $out */
+        $out = $actionObj::class::executeForUpdateOperation($ctx);
+
+        expect($out->success())->toBeTrue()
+            ->and($out->errorsArray())->toEqual([]);
     });
 });

@@ -6,6 +6,7 @@ namespace Flowlight;
 
 use Flowlight\Enums\ContextOperation;
 use Flowlight\Enums\ContextStatus;
+use Flowlight\Utils\ObjectUtils;
 use Illuminate\Support\Collection;
 use Throwable;
 use Traversable;
@@ -40,6 +41,11 @@ final class Context
     /** @var Collection<string, mixed> Extra rules for domain-specific validation. */
     private Collection $extraRules;
 
+    /**
+     * @var Collection<int,string> List of dotted keys to omit from validation rules.
+     */
+    private Collection $dottedOmitRules;
+
     /** @var Collection<string, mixed> Internal-only state not exposed to consumers. */
     private Collection $internalOnly;
 
@@ -67,6 +73,10 @@ final class Context
         $this->resources = collect();
         $this->meta = collect();
         $this->extraRules = collect();
+
+        /** @var Collection<int,string> $emptyStringList */
+        $emptyStringList = collect();
+        $this->dottedOmitRules = $emptyStringList;
         $this->internalOnly = collect();
         $this->markUpdateOperation();
     }
@@ -74,7 +84,7 @@ final class Context
     /**
      * Create a Context with default empty Collections and optional whitelisted overrides.
      *
-     * Recognized override keys: params, errors, resource, extraRules, internalOnly, meta, invokedAction.
+     * Recognized override keys: params, errors, resource, extraRules, dottedOmitRules, internalOnly, meta, invokedAction.
      *
      * @param  array<string,mixed>  $input
      * @param  array<string,mixed>  $overrides
@@ -95,8 +105,29 @@ final class Context
 
         foreach ($map as $key => $property) {
             if (\array_key_exists($key, $overrides)) {
-                $ctx->{$property} = self::asCollection($overrides[$key]);
+                /** @var Collection<string,mixed> $current */
+                $current = $ctx->{$property};
+                $ctx->{$property} = $current->merge(self::asCollection($overrides[$key]));
             }
+        }
+
+        // dottedOmitRules is a list<string>; normalize and REPLACE (not merge)
+        if (\array_key_exists('dottedOmitRules', $overrides)) {
+            /** @var mixed $raw */
+            $raw = $overrides['dottedOmitRules'];
+
+            /** @var array<int,mixed>|Collection<int,mixed>|string|null $rawSafe */
+            $rawSafe = (\is_array($raw) || $raw instanceof Collection || \is_string($raw) || $raw === null)
+                ? $raw
+                : null;
+
+            // normalizeKeyList returns list<string>|null
+            $list = ObjectUtils::normalizeKeyList($rawSafe) ?? [];
+
+            /** @var \Illuminate\Support\Collection<int,string> $col */
+            $col = collect($list);
+
+            $ctx->dottedOmitRules = $col;
         }
 
         return $ctx;
@@ -105,11 +136,15 @@ final class Context
     /**
      * Snapshot of context suitable for external consumers.
      *
+     * When $onlyDottedKeys is provided (string or list/Collection of strings),
+     * returns a collection keyed by those dotted paths, defaulting missing paths to null.
+     *
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
      * @return Collection<string,mixed>
      */
-    public function toCollection(): Collection
+    public function toCollection(string|array|Collection|null $onlyDottedKeys = null): Collection
     {
-        return collect([
+        $snapshot = collect([
             // core payloads
             'input' => $this->inputArray(),
             'params' => $this->paramsArray(),
@@ -129,14 +164,17 @@ final class Context
             'failure' => $this->failure(),
             'operation' => $this->operation(),
         ]);
+
+        return $this->selectKeys($snapshot, $onlyDottedKeys);
     }
 
     /**
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
      * @return array<string,mixed>
      */
-    public function toArray(): array
+    public function toArray(string|array|Collection|null $onlyDottedKeys = null): array
     {
-        return $this->toCollection()->toArray();
+        return $this->toCollection($onlyDottedKeys)->toArray();
     }
 
     // ── Mutators (fluent) ─────────────────────────────────────────────────────────
@@ -293,34 +331,51 @@ final class Context
 
     // ── Array accessors ───────────────────────────────────────────────────────────
 
-    /** @return array<string,mixed> */
-    public function inputArray(): array
+    /**
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return array<string,mixed>
+     */
+    public function inputArray(string|array|Collection|null $onlyDottedKeys = null): array
     {
-        return $this->input->all();
+        return $this->input($onlyDottedKeys)->all();
     }
 
-    /** @return array<string,mixed> */
-    public function errorsArray(): array
+    /**
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return array<string,mixed>
+     */
+    public function errorsArray(string|array|Collection|null $onlyDottedKeys = null): array
     {
-        return $this->errors->all();
+        return $this->errors($onlyDottedKeys)->all();
     }
 
-    /** @return array<string,mixed> */
-    public function paramsArray(): array
+    /**
+     * paramsArray(..) calls params(..)->all()
+     *
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return array<string,mixed>
+     */
+    public function paramsArray(string|array|Collection|null $onlyDottedKeys = null): array
     {
-        return $this->params->all();
+        return $this->params($onlyDottedKeys)->all();
     }
 
-    /** @return array<string,mixed> */
-    public function resourcesArray(): array
+    /**
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return array<string,mixed>
+     */
+    public function resourcesArray(string|array|Collection|null $onlyDottedKeys = null): array
     {
-        return $this->resources->all();
+        return $this->resources($onlyDottedKeys)->all();
     }
 
-    /** @return array<string,mixed> */
-    public function metaArray(): array
+    /**
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return array<string,mixed>
+     */
+    public function metaArray(string|array|Collection|null $onlyDottedKeys = null): array
     {
-        return $this->meta->all();
+        return $this->meta($onlyDottedKeys)->all();
     }
 
     /** @return array<string,mixed> */
@@ -329,36 +384,58 @@ final class Context
         return $this->extraRules->all();
     }
 
-    /** @return array<string,mixed> */
-    public function internalOnlyArray(): array
+    /** @return list<string> */
+    public function dottedOmitRulesArray(): array
     {
-        return $this->internalOnly->all();
+        /** @var list<string> */
+        return $this->dottedOmitRules->all();
+    }
+
+    /**
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return array<string,mixed>
+     */
+    public function internalOnlyArray(string|array|Collection|null $onlyDottedKeys = null): array
+    {
+        return $this->internalOnly($onlyDottedKeys)->all();
     }
 
     // ── Collection accessors ──────────────────────────────────────────────────────
 
-    /** @return Collection<string,mixed> */
-    public function input(): Collection
+    /**
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return Collection<string,mixed>
+     */
+    public function input(string|array|Collection|null $onlyDottedKeys = null): Collection
     {
-        return $this->input;
+        return $this->selectKeys($this->input, $onlyDottedKeys);
     }
 
-    /** @return Collection<string,mixed> */
-    public function errors(): Collection
+    /**
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return Collection<string,mixed>
+     */
+    public function errors(string|array|Collection|null $onlyDottedKeys = null): Collection
     {
-        return $this->errors;
+        return $this->selectKeys($this->errors, $onlyDottedKeys);
     }
 
-    /** @return Collection<string,mixed> */
-    public function params(): Collection
+    /**
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return Collection<string,mixed>
+     */
+    public function params(string|array|Collection|null $onlyDottedKeys = null): Collection
     {
-        return $this->params;
+        return $this->selectKeys($this->params, $onlyDottedKeys);
     }
 
-    /** @return Collection<string,mixed> */
-    public function resources(): Collection
+    /**
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return Collection<string,mixed>
+     */
+    public function resources(string|array|Collection|null $onlyDottedKeys = null): Collection
     {
-        return $this->resources;
+        return $this->selectKeys($this->resources, $onlyDottedKeys);
     }
 
     /**
@@ -369,10 +446,13 @@ final class Context
         return data_get($this->resourcesArray(), $dottedKey);
     }
 
-    /** @return Collection<string,mixed> */
-    public function meta(): Collection
+    /**
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return Collection<string,mixed>
+     */
+    public function meta(string|array|Collection|null $onlyDottedKeys = null): Collection
     {
-        return $this->meta;
+        return $this->selectKeys($this->meta, $onlyDottedKeys);
     }
 
     /** @return Collection<string,mixed> */
@@ -381,10 +461,22 @@ final class Context
         return $this->extraRules;
     }
 
-    /** @return Collection<string,mixed> */
-    public function internalOnly(): Collection
+    /** @return Collection<int,string> */
+    public function dottedOmitRules(): Collection
     {
-        return $this->internalOnly;
+        /** @var Collection<int,string> $col */
+        $col = collect($this->dottedOmitRulesArray());
+
+        return $col;
+    }
+
+    /**
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return Collection<string,mixed>
+     */
+    public function internalOnly(string|array|Collection|null $onlyDottedKeys = null): Collection
+    {
+        return $this->selectKeys($this->internalOnly, $onlyDottedKeys);
     }
 
     // ── Organizer / action names ─────────────────────────────────────────────────
@@ -538,7 +630,7 @@ final class Context
     public function operation(): string
     {
         /** @var string */
-        return $this->meta()->get('operation');
+        return $this->meta()->get('operation') ?? ContextOperation::UPDATE->value;
     }
 
     /**
@@ -555,6 +647,7 @@ final class Context
             $this->withErrors($errs);
         }
 
+        // ⬇️ use ErrorInfo::toCollection(), not asCollection()
         $summary = $this->errorInfo
             ->toCollection()
             ->merge([
@@ -599,6 +692,35 @@ final class Context
         $pos = strrpos($fqcn, '\\');
 
         return $pos === false ? $fqcn : substr($fqcn, $pos + 1);
+    }
+
+    /**
+     * Select dotted keys from a collection (defaults to the entire collection when no keys).
+     * Missing keys are included with null values.
+     *
+     * @param  Collection<string,mixed>  $source
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return Collection<string,mixed>
+     */
+    /**
+     * @param  Collection<string,mixed>  $source
+     * @param  string|array<int,string>|Collection<int,string>|null  $onlyDottedKeys
+     * @return Collection<string,mixed>
+     */
+    private function selectKeys(Collection $source, string|array|Collection|null $onlyDottedKeys = null): Collection
+    {
+        $list = ObjectUtils::normalizeKeyList($onlyDottedKeys);
+        if ($list === null) {
+            return $source;
+        }
+
+        /** @var array<string,mixed> $array */
+        $array = $source->all();
+
+        /** @var array<string,mixed> $out */
+        $out = ObjectUtils::pickOrNull($array, $list);
+
+        return collect($out);
     }
 
     /**

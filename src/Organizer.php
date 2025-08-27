@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Flowlight;
 
 use Flowlight\Traits\WithErrorHandler;
+use Throwable;
 
 /**
  * Organizer — runs an ordered sequence of steps (Actions or callables) against a shared Context.
@@ -61,25 +62,40 @@ abstract class Organizer
      * @param  array<string,mixed>  $input  Initial inputs
      * @param  array<string,mixed>  $overrides  Whitelisted collection seeds (params, errors, resource, etc.)
      * @param  null|callable(Context):void  $transformContext  Pre-execution hook to mutate Context
+     *
+     * @throws Throwable
      */
-    public static function call(array $input = [], array $overrides = [], ?callable $transformContext = null): Context
-    {
-        $ctx = Context::makeWithDefaults($input, $overrides)->setCurrentOrganizer(static::class);
+    public static function call(
+        array $input = [],
+        array $overrides = [],
+        ?callable $transformContext = null
+    ): Context {
+        return self::run($input, $overrides, $transformContext);
+    }
 
-        if (is_callable($transformContext)) {
-            $transformContext($ctx); // runs before steps (asserted in tests)
-        }
+    /**
+     * Convenience wrapper that ensures CREATE semantics before running steps.
+     *
+     * @param  array<string,mixed>  $input  Initial inputs
+     * @param  array<string,mixed>  $overrides  Whitelisted seeds (params, errors, resources, etc.)
+     * @param  null|callable(Context):void  $transformContext  Optional pre-exec hook (runs after markCreateOperation)
+     *
+     * @throws Throwable
+     */
+    public static function callForCreateOperation(
+        array $input = [],
+        array $overrides = [],
+        ?callable $transformContext = null
+    ): Context {
+        $compose = static function (Context $ctx) use ($transformContext): void {
+            $ctx->markCreateOperation();
 
-        self::withErrorHandler($ctx, function (Context $ctx): void {
-            static::reduce($ctx, self::allSteps());
-        });
+            if (is_callable($transformContext)) {
+                $transformContext($ctx);
+            }
+        };
 
-        // Do NOT mark complete on failure — tests assert this behavior
-        if ($ctx->success()) {
-            $ctx->markComplete();
-        }
-
-        return $ctx;
+        return self::run($input, $overrides, $compose);
     }
 
     /**
@@ -149,5 +165,36 @@ abstract class Organizer
         };
 
         return $list;
+    }
+
+    /**
+     * Core executor: constructs Context, applies transform, runs steps.
+     *
+     * @param  array<string,mixed>  $input
+     * @param  array<string,mixed>  $overrides
+     * @param  null|callable(Context):void  $transformContext
+     *
+     * @throws Throwable
+     */
+    private static function run(
+        array $input,
+        array $overrides,
+        ?callable $transformContext
+    ): Context {
+        $ctx = Context::makeWithDefaults($input, $overrides)->setCurrentOrganizer(static::class);
+
+        if (is_callable($transformContext)) {
+            $transformContext($ctx);
+        }
+
+        self::withErrorHandler($ctx, function (Context $ctx): void {
+            static::reduce($ctx, self::allSteps());
+        });
+
+        if ($ctx->success()) {
+            $ctx->markComplete();
+        }
+
+        return $ctx;
     }
 }

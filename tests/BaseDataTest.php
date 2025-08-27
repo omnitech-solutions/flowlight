@@ -155,7 +155,7 @@ describe('::buildValidator', function () {
             /** @var Validator $v */
             $v = $Bare::validatorForPayload(
                 payload: ['any' => 'thing'],  // no rules => ok
-                operation: \Flowlight\Enums\ContextOperation::UPDATE->value
+                operation: ContextOperation::UPDATE->value
             );
 
             expect($v)->toBeInstanceOf(Validator::class)
@@ -274,13 +274,122 @@ describe('::validatorForPayload', function () use ($makeDto) {
         expect($v->fails())->toBeTrue()
             ->and($v->errors()->toArray())->toHaveKey('name');
     });
+
+    it('omits nested dotted rules (array input) so missing dotted fields do not fail', function () use ($makeDto) {
+        // Override rules to ONLY test dotted keys (no email/id/uuid noise)
+        $dto = $makeDto(
+            data: ['profile' => []],
+            rules: [
+                'profile' => ['array'],
+                'profile.name' => ['required', 'string'],
+                'profile.address.city' => ['required', 'string'],
+            ]
+        );
+
+        // No dotted fields present in payload; omit them via dottedOmitRules
+        $payload = ['profile' => []];
+
+        /** @var Validator $v */
+        $v = $dto::validatorForPayload(
+            payload: $payload,
+            dottedOmitRules: ['profile.name', 'profile.address.city'],
+            operation: ContextOperation::UPDATE->value
+        );
+
+        expect($v->fails())->toBeFalse()
+            ->and($v->errors()->toArray())->toBe([]);
+    });
+
+    it('omits scalar rule by key (e.g., uuid) under UPDATE so invalid/missing values pass', function () use ($makeDto) {
+        // Rules: uuid must be valid, name required
+        $dto = $makeDto(
+            data: ['name' => 'Ok'],
+            rules: [
+                'uuid' => ['required', 'uuid'],
+                'name' => ['required', 'string'],
+            ]
+        );
+
+        // Payload has name OK, but uuid missing/invalid; dottedOmitRules removes 'uuid' rule
+        $payload = ['name' => 'Ok'];
+
+        /** @var Validator $v */
+        $v = $dto::validatorForPayload(
+            payload: $payload,
+            dottedOmitRules: ['uuid'],
+            operation: ContextOperation::UPDATE->value
+        );
+
+        expect($v->fails())->toBeFalse()
+            ->and($v->errors()->toArray())->toBe([]);
+    });
+
+    it('accepts dottedOmitRules as a Collection equally to array', function () use ($makeDto) {
+        $dto = $makeDto(
+            data: ['profile' => []],
+            rules: [
+                'profile' => ['array'],
+                'profile.name' => ['required', 'string'],
+                'profile.address.city' => ['required', 'string'],
+            ]
+        );
+
+        $payload = ['profile' => []];
+
+        $omitAsArray = ['profile.name', 'profile.address.city'];
+        $omitAsCollection = collect($omitAsArray);
+
+        /** @var Validator $vA */
+        $vA = $dto::validatorForPayload(
+            payload: $payload,
+            dottedOmitRules: $omitAsArray,
+            operation: ContextOperation::UPDATE->value
+        );
+
+        /** @var Validator $vB */
+        $vB = $dto::validatorForPayload(
+            payload: $payload,
+            extraRules: [],
+            dottedOmitRules: $omitAsCollection,
+            operation: ContextOperation::UPDATE->value
+        );
+
+        expect($vA->fails())->toBeFalse()
+            ->and($vB->fails())->toBeFalse()
+            ->and($vA->errors()->toArray())->toBe($vB->errors()->toArray());
+    });
+
+    it('applies dotted omits under CREATE as well (independent of op-specific filtering)', function () use ($makeDto) {
+        // NOTE: This test asserts that dotted omits are applied even for CREATE.
+        // If your BaseData::rulesForOperation returns early on CREATE, update it to apply
+        // dotted omits before returning.
+        $dto = $makeDto(
+            data: ['meta' => []],
+            rules: [
+                // pretend meta.flag is required on CREATE, but we want to omit it
+                'meta.flag' => ['required', 'boolean'],
+            ]
+        );
+
+        $payload = ['meta' => []];
+
+        /** @var Validator $v */
+        $v = $dto::validatorForPayload(
+            payload: $payload,
+            dottedOmitRules: ['meta.flag'],
+            operation: ContextOperation::CREATE->value
+        );
+
+        expect($v->errors()->toArray())->toBe([])
+            ->and($v->fails())->toBeFalse();
+    });
 });
 
 //
 // ::rulesForOperation (indirect via ::validatorForPayload)
 //
 describe('::rulesForOperation', function () use ($makeDto) {
-    it('keeps id/uuid rules under CREATE and validates them', function () use ($makeDto) {
+    it('drops id/uuid rules under CREATE (does not validate them)', function () use ($makeDto) {
         $dto = $makeDto(id: 0, uuid: 'not-a-uuid', email: 'ok@example.com');
 
         /** @var Validator $v */
@@ -290,24 +399,24 @@ describe('::rulesForOperation', function () use ($makeDto) {
         );
 
         $errs = $v->errors()->toArray();
-        expect($v->fails())->toBeTrue()
-            ->and(array_key_exists('id', $errs))->toBeTrue()
-            ->and(array_key_exists('uuid', $errs))->toBeTrue();
+        expect($v->fails())->toBeFalse()
+            ->and(array_key_exists('id', $errs))->toBeFalse()
+            ->and(array_key_exists('uuid', $errs))->toBeFalse();
     });
 
-    it('drops id/uuid rules under UPDATE and does not validate them', function () use ($makeDto) {
+    it('keeps id/uuid rules under UPDATE (validates them)', function () use ($makeDto) {
         $dto = $makeDto(id: 0, uuid: 'not-a-uuid', email: 'ok@example.com');
 
         /** @var Validator $v */
         $v = $dto::validatorForPayload(
             payload: $dto->toArray(),
-            operation: ContextOperation::UPDATE->value // should DROP id/uuid rules
+            operation: ContextOperation::UPDATE->value
         );
 
         $errs = $v->errors()->toArray();
-        expect($v->fails())->toBeFalse()
-            ->and(array_key_exists('id', $errs))->toBeFalse()
-            ->and(array_key_exists('uuid', $errs))->toBeFalse();
+        expect($v->fails())->toBeTrue()
+            ->and(array_key_exists('id', $errs))->toBeTrue()
+            ->and(array_key_exists('uuid', $errs))->toBeTrue();
     });
 
     it('respects CREATE vs UPDATE filtering with explicit override rules', function () use ($makeDto) {
@@ -319,24 +428,24 @@ describe('::rulesForOperation', function () use ($makeDto) {
             ]
         );
 
-        // UPDATE → drop id/uuid rules → PASS
+        // UPDATE → keep id/uuid rules → FAIL
         /** @var Validator $vU */
         $vU = $dto::validatorForPayload(
             payload: $dto->toArray(),
             operation: ContextOperation::UPDATE->value
         );
-        expect($vU->fails())->toBeFalse();
+        expect($vU->fails())->toBeTrue();
 
-        // CREATE → keep id/uuid rules → FAIL
+        // CREATE → drop id/uuid rules → PASS
         /** @var Validator $vC */
         $vC = $dto::validatorForPayload(
             payload: $dto->toArray(),
             operation: ContextOperation::CREATE->value
         );
-        expect($vC->fails())->toBeTrue();
+        expect($vC->fails())->toBeFalse();
     });
 
-    it('normalizes operation: "CREATE" and " create " keep id/uuid rules', function () use ($makeDto) {
+    it('normalizes operation: "CREATE" and " create " → drops id/uuid rules', function () use ($makeDto) {
         $dto = $makeDto(id: 0, uuid: 'not-a-uuid', email: 'ok@example.com');
 
         foreach (['CREATE', ' create '] as $op) {
@@ -346,15 +455,14 @@ describe('::rulesForOperation', function () use ($makeDto) {
                 operation: $op
             );
 
-            $errors = $v->errors()->toArray();
-
-            expect($v->fails())->toBeTrue()
-                ->and(array_key_exists('id', $errors))->toBeTrue()
-                ->and(array_key_exists('uuid', $errors))->toBeTrue();
+            $errs = $v->errors()->toArray();
+            expect($v->fails())->toBeFalse()
+                ->and(array_key_exists('id', $errs))->toBeFalse()
+                ->and(array_key_exists('uuid', $errs))->toBeFalse();
         }
     });
 
-    it('normalizes operation: mixed-case "UpDaTe" drops id/uuid rules', function () use ($makeDto) {
+    it('normalizes operation: mixed-case "UpDaTe" → keeps id/uuid rules', function () use ($makeDto) {
         $dto = $makeDto(id: 0, uuid: 'not-a-uuid', email: 'ok@example.com');
 
         /** @var Validator $v */
@@ -363,10 +471,9 @@ describe('::rulesForOperation', function () use ($makeDto) {
             operation: 'UpDaTe'
         );
 
-        $errors = $v->errors()->toArray();
-
-        expect($v->fails())->toBeFalse()
-            ->and(array_key_exists('id', $errors))->toBeFalse()
-            ->and(array_key_exists('uuid', $errors))->toBeFalse();
+        $errs = $v->errors()->toArray();
+        expect($v->fails())->toBeTrue()
+            ->and(array_key_exists('id', $errs))->toBeTrue()
+            ->and(array_key_exists('uuid', $errs))->toBeTrue();
     });
 });

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Flowlight\Action;
 use Flowlight\Context;
+use Flowlight\Enums\ContextOperation;
 use Flowlight\Enums\ContextStatus;
 use Flowlight\Organizer;
 
@@ -209,6 +210,126 @@ describe('::call', function () {
             ->and($ctx->metaArray())->not->toHaveKey('unreachable')
             ->and($ctx->success())->toBeFalse()
             ->and($ctx->status())->not->toBe(ContextStatus::COMPLETE);
+    });
+});
+
+describe('Organizer::callForCreateOperation', function () {
+    it('marks context CREATE before steps and completes on success', function () {
+        // Capture what operation steps observe
+        $observed = [];
+
+        // Anonymous organizer with simple steps
+        $Org = new class extends Organizer
+        {
+            /** @phpstan-ignore-next-line */
+            public static array $observed;
+
+            protected static function steps(): array
+            {
+                return [
+                    // step 1: record the operation seen by steps
+                    static function (Context $ctx): void {
+                        /** @var string $op */
+                        $op = $ctx->operation();
+                        self::$observed[] = $op;
+                    },
+                ];
+            }
+        };
+        /** @var class-string<Organizer> $cls */
+        $cls = $Org::class;
+        $cls::$observed = &$observed;
+
+        /** @var Context $out */
+        $out = $cls::callForCreateOperation(['foo' => 'bar']);
+
+        // Steps saw CREATE
+        expect($observed)->toBe([ContextOperation::CREATE->value]);
+
+        // Context is still CREATE afterward and pipeline completed
+        expect($out->operation())->toBe(ContextOperation::CREATE->value)
+            ->and($out->success())->toBeTrue()
+            ->and($out->metaArray())->toHaveKey('all_actions_complete', true);
+    });
+
+    it('applies user transform after markCreateOperation (transform can override)', function () {
+        $observed = [];
+
+        $Org = new class extends Organizer
+        {
+            /** @phpstan-ignore-next-line */
+            public static array $observed;
+
+            protected static function steps(): array
+            {
+                return [
+                    static function (Context $ctx): void {
+                        /** @var string $op */
+                        $op = $ctx->operation();
+                        self::$observed[] = $op;
+                    },
+                ];
+            }
+        };
+        /** @var class-string<Organizer> $cls */
+        $cls = $Org::class;
+        $cls::$observed = &$observed;
+
+        // Transform flips it back to UPDATE; since transform runs AFTER markCreateOperation,
+        // steps should observe UPDATE.
+        $transform = static function (Context $ctx): void {
+            $ctx->markUpdateOperation();
+        };
+
+        /** @var Context $out */
+        $out = $cls::callForCreateOperation(['x' => 1], [], $transform);
+
+        expect($observed)->toBe([ContextOperation::UPDATE->value])
+            ->and($out->operation())->toBe(ContextOperation::UPDATE->value)
+            ->and($out->success())->toBeTrue()
+            ->and($out->metaArray())->toHaveKey('all_actions_complete', true);
+    });
+
+    it('passes overrides through unchanged', function () {
+        /** @var list<array<string,mixed>> $observed */
+        $observed = [];
+
+        $Org = new class extends Organizer
+        {
+            /** @var list<array<string,mixed>> */
+            public static array $observed = [];
+
+            protected static function steps(): array
+            {
+                return [
+                    static function (Context $ctx): void {
+                        // record both operation and a value from overrides
+                        self::$observed[] = [
+                            'op' => $ctx->operation(),
+                            'meta.flag' => data_get($ctx->metaArray(), 'flag'),
+                        ];
+                    },
+                ];
+            }
+        };
+
+        /** @var class-string<Organizer> $cls */
+        $cls = $Org::class;
+
+        // keep a reference so we can read what the anon Organizer recorded
+        $cls::$observed = &$observed;
+
+        /** @var array<string,mixed> $overrides */
+        $overrides = ['meta' => ['flag' => true]];
+
+        $cls::callForCreateOperation([], $overrides);
+
+        // runtime assertion + static hint for PHPStan before offset access
+        expect($observed)->not->toBeEmpty();
+        /** @var non-empty-list<array<string,mixed>> $observed */
+        $first = $observed[0];
+        expect($first['op'] ?? null)->toBe('CREATE')
+            ->and($first['meta.flag'] ?? null)->toBeTrue();
     });
 });
 

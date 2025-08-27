@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Flowlight;
 
 use Flowlight\Enums\ContextOperation;
+use Flowlight\Utils\ObjectUtils;
 use Illuminate\Container\Container;
 use Illuminate\Support\Collection;
 use Illuminate\Translation\ArrayLoader;
@@ -24,10 +25,11 @@ use Throwable;
  *
  * Operations & Rule Handling
  *  - rules(): base rules for the DTO.
- *  - rulesForOperation(extraRules, operation):
+ *  - rulesForOperation(extraRules, dottedOmitRules, operation):
  *      * Merges base rules with $extraRules (right-biased on duplicate keys).
- *      * For non-CREATE operations, excludes identifiers ('id', 'uuid').
- *  - validatorForPayload(payload, extraRules, operation):
+ *      * Applies dotted-key omissions via ObjectUtils::dottedOmit().
+ *      * For CREATE operations, excludes identifiers ('id', 'uuid').
+ *  - validatorForPayload(payload, extraRules, dottedOmitRules, operation):
  *      * Computes effective rules (respecting operation) and returns a Validator.
  *
  * Container Fallback
@@ -48,37 +50,35 @@ abstract class BaseData extends Data
 
     /**
      * Build a Validator for an explicit payload using this DTO’s rules (plus optional extras).
-     * Does NOT instantiate the DTO (avoids Spatie Data construction/config).
      *
-     * @param  array<string,mixed>|Collection<string,mixed>  $payload  Arbitrary input to validate
-     * @param  array<string, array<int, mixed>>|Collection<string, array<int, mixed>>  $extraRules  Additional/override rules (merged right-biased)
-     * @param  string  $operation  One of ContextOperation::*->value (defaults to UPDATE)
+     * @param  array<string,mixed>|Collection<string,mixed>  $payload
+     * @param  array<string, array<int, mixed>>|Collection<string, array<int, mixed>>  $extraRules
+     * @param  array<int,string>|Collection<int,string>  $dottedOmitRules
+     * @param  string  $operation  One of ContextOperation::*->value
      */
     public static function validatorForPayload(
         array|Collection $payload,
         array|Collection $extraRules = [],
+        array|Collection $dottedOmitRules = [],
         string $operation = ContextOperation::UPDATE->value
     ): Validator {
-        $allRules = static::rulesForOperation($extraRules, $operation);
+        $allRules = static::rulesForOperation($extraRules, $dottedOmitRules, $operation);
 
         return static::buildValidator($allRules, $payload);
     }
 
     /**
-     * Compute effective rules for a given operation by merging base + extra and filtering identifiers.
-     *
-     * Semantics:
-     *  - Merge: base rules from static::rules() merged with $extraRules (extra wins on key conflicts).
-     *  - Operation filter:
-     *      * CREATE  → return merged rules unchanged.
-     *      * non-CREATE (e.g., UPDATE) → exclude ['id', 'uuid'] from the resulting rules.
+     * Compute effective rules for a given operation by merging base + extra, applying dotted omits,
+     * and filtering identifiers for CREATE.
      *
      * @param  array<string, array<int, mixed>>|Collection<string, array<int, mixed>>  $extraRules
+     * @param  array<int,string>|Collection<int,string>  $dottedOmitRules
      * @param  string  $operation  One of ContextOperation::*->value
      * @return Collection<string, array<int, mixed>>
      */
     protected static function rulesForOperation(
         array|Collection $extraRules,
+        array|Collection $dottedOmitRules = [],
         string $operation = ContextOperation::UPDATE->value
     ): Collection {
         /** @var Collection<string, array<int, mixed>> $base */
@@ -90,10 +90,28 @@ abstract class BaseData extends Data
         /** @var Collection<string, array<int, mixed>> $merged */
         $merged = $base->merge($extra);
 
-        $op = strtolower(trim($operation));
+        // Normalize omit keys to array<int,string> for ObjectUtils::dottedOmit
+        /** @var array<int, mixed> $omitRaw */
+        $omitRaw = $dottedOmitRules instanceof Collection ? $dottedOmitRules->all() : (array) $dottedOmitRules;
 
-        if ($op !== strtolower(ContextOperation::CREATE->value)) {
-            return $merged->except(['id', 'uuid']);
+        /** @var array<int,string> $omitKeys */
+        $omitKeys = array_values(
+            array_map(
+                static fn (mixed $k): string => (string) $k,
+                array_filter($omitRaw, static fn (mixed $k): bool => is_scalar($k))
+            )
+        );
+
+        if (! empty($omitKeys)) {
+            $merged = collect(
+                ObjectUtils::dottedOmit($merged->toArray(), $omitKeys)
+            );
+        }
+
+        $op = strtolower(trim($operation));
+        if ($op === strtolower(ContextOperation::CREATE->value)) {
+            // also exclude identifiers on CREATE
+            $merged = $merged->except(['id', 'uuid']);
         }
 
         return $merged;

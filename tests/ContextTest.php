@@ -18,7 +18,7 @@ describe('::makeWithDefaults', function () {
 
         expect($ctx->inputArray())->toBe(['in' => 1])
             ->and($ctx->paramsArray())->toBe(['p' => 1])
-            ->and($ctx->metaArray())->toBe(['m' => true])
+            ->and($ctx->metaArray())->toBe(['operation' => ContextOperation::UPDATE->value, 'm' => true])
             ->and($ctx->resourcesArray())->toBe(['r' => [1, 2]]);
     });
 
@@ -399,7 +399,7 @@ describe('array and collection accessors', function () {
 
         expect($ctx->inputArray())->toBe(['k' => 'v'])
             ->and($ctx->paramsArray())->toBe(['p' => 1])
-            ->and($ctx->metaArray())->toBe(['m' => true])
+            ->and($ctx->meta(['m'])->all())->toBe(['m' => true])
             ->and($ctx->resourcesArray())->toBe(['r' => [1, 2]]);
     });
 
@@ -453,6 +453,71 @@ describe('successfulActions', function () {
     });
 });
 
+describe('dottedOmitRules overrides and accessors', function () {
+    it('accepts dottedOmitRules as array and exposes via accessors', function () {
+        $ctx = Context::makeWithDefaults([], [
+            'dottedOmitRules' => ['profile.name', 'meta.flag'],
+        ]);
+
+        // array accessor
+        expect($ctx->dottedOmitRulesArray())->toBe(['profile.name', 'meta.flag']);
+
+        // collection accessor (typed list<int,string>)
+        $col = $ctx->dottedOmitRules();
+        expect($col)->toBeInstanceOf(\Illuminate\Support\Collection::class)
+            ->and($col->all())->toBe(['profile.name', 'meta.flag']);
+    });
+
+    it('accepts dottedOmitRules as Collection and as single string', function () {
+        // Collection input
+        $colInput = collect(['a.b', 'c']);
+        $ctxA = Context::makeWithDefaults([], [
+            'dottedOmitRules' => $colInput,
+        ]);
+
+        expect($ctxA->dottedOmitRulesArray())->toBe(['a.b', 'c'])
+            ->and($ctxA->dottedOmitRules()->all())->toBe(['a.b', 'c']);
+
+        // Single string input
+        $ctxB = Context::makeWithDefaults([], [
+            'dottedOmitRules' => 'one.two',
+        ]);
+
+        expect($ctxB->dottedOmitRulesArray())->toBe(['one.two'])
+            ->and($ctxB->dottedOmitRules()->all())->toBe(['one.two']);
+    });
+
+    it('normalizes invalid dottedOmitRules types to empty list', function () {
+        // Pass a type normalizeKeyList does not accept (e.g., int)
+        $ctx = Context::makeWithDefaults([], [
+            'dottedOmitRules' => 123,
+        ]);
+
+        expect($ctx->dottedOmitRulesArray())->toBe([])
+            ->and($ctx->dottedOmitRules()->all())->toBe([]);
+    });
+
+    it('coexists with other overrides without interference', function () {
+        $ctx = Context::makeWithDefaults(
+            ['in' => 1],
+            [
+                'params' => ['p' => 2],
+                'meta' => ['m' => true],
+                'resources' => ['r' => ['x' => 9]],
+                'dottedOmitRules' => ['foo.bar', 'baz'],
+            ]
+        );
+
+        expect($ctx->paramsArray())->toBe(['p' => 2])
+            ->and($ctx->metaArray())->toMatchArray([
+                'operation' => ContextOperation::UPDATE->value,
+                'm' => true,
+            ])
+            ->and($ctx->resourcesArray())->toBe(['r' => ['x' => 9]])
+            ->and($ctx->dottedOmitRulesArray())->toBe(['foo.bar', 'baz']);
+    });
+});
+
 describe('lastFailedContext snapshot', function () {
     it('returns null when unset', function () {
         $ctx = Context::makeWithDefaults();
@@ -492,7 +557,10 @@ describe('lastFailedContext snapshot', function () {
             ->and($snap)->toHaveKey('label', 'DoThing')
             ->and($snap['input'])->toBe(['in' => 1])
             ->and($snap['params'])->toBe(['p' => 2])
-            ->and($snap['meta'])->toBe(['m' => 3])
+            ->and($snap['meta'])->toBe([
+                'operation' => ContextOperation::UPDATE->value,
+                'm' => 3,
+            ])
             ->and($snap['errors'])->toBe(['field' => ['bad']])
             ->and($snap['resources'])->toBe(['r' => ['x' => true]])
             ->and($snap['status'])->toBe(ContextStatus::INCOMPLETE->value);
@@ -555,17 +623,120 @@ describe('toCollection / toArray and asCollection fallback', function () {
         // Basic shape & values
         expect($bag)->toBeInstanceOf(Collection::class)
             ->and($bag->get('input'))->toBe(['in' => 1])
-            ->and($bag->get('params'))->toBe([])
+            ->and($bag->get('params'))->toBe([]) // fallback worked
             ->and($bag->get('meta'))->toBe(['operation' => ContextOperation::UPDATE->value])
             ->and($bag->get('errors'))->toBe([])
             ->and($bag->get('resources'))->toBe([])
             ->and($bag->get('errorInfo'))->toBeNull()
             ->and($bag->get('organizer'))->toBeNull()
             ->and($bag->get('action'))->toBeNull()
+            // status uses the enum NAME in toCollection()
             ->and($bag->get('status'))->toBe(ContextStatus::INCOMPLETE->name)
             ->and($bag->get('aborted'))->toBeFalse()
             ->and($bag->get('success'))->toBeTrue()
             ->and($bag->get('failure'))->toBeFalse()
             ->and($bag->get('operation'))->toBe(ContextOperation::UPDATE->value);
+    });
+});
+
+//
+// New tests for dotted-key filtering on accessors & arrays,
+// and dotted-key snapshot lookups via toCollection()/toArray().
+//
+describe('dotted-key accessors and arrays', function () {
+    it('supports single and multiple dotted keys across all accessors, defaulting missing to null', function () {
+        $ctx = Context::makeWithDefaults(
+            ['in' => ['a' => 1, 'b' => ['c' => 3]]],
+            [
+                'params' => ['p' => 2],
+                'meta' => ['m' => true],
+                'resources' => [
+                    'obj' => ['id' => 9],
+                    'list' => [0, 1, 2],
+                ],
+                'errors' => ['email' => ['invalid']],
+                'internalOnly' => ['secret' => 42],
+            ]
+        );
+
+        // Collections
+        $inOne = $ctx->input('in.b.c');
+        $inMany = $ctx->input(['in.a', 'missing']);
+        $prOne = $ctx->params('p');
+        $prMany = $ctx->params(['p', 'missing']);
+        $erMany = $ctx->errors(['email', 'none']);
+        $rsMany = $ctx->resources(['obj.id', 'list.1', 'resources.missing']);
+        $mtMany = $ctx->meta(['operation', 'm', 'nope']);
+        $ioMany = $ctx->internalOnly(['secret', 'also.missing']);
+
+        expect($inOne)->toBeInstanceOf(Collection::class)
+            ->and($inOne->all())->toBe(['in.b.c' => 3]);
+
+        expect($inMany->all())->toBe(['in.a' => 1, 'missing' => null]);
+        expect($prOne->all())->toBe(['p' => 2]);
+        expect($prMany->all())->toBe(['p' => 2, 'missing' => null]);
+        expect($erMany->all())->toBe(['email' => ['invalid'], 'none' => null]);
+        expect($rsMany->all())->toBe(['obj.id' => 9, 'list.1' => 1, 'resources.missing' => null]);
+        expect($mtMany->all())->toBe([
+            'operation' => ContextOperation::UPDATE->value, // default set in ctor
+            'm' => true,
+            'nope' => null,
+        ]);
+        expect($ioMany->all())->toBe(['secret' => 42, 'also.missing' => null]);
+
+        // Array counterparts always go through the collection → ->all()
+        expect($ctx->inputArray(['in.b.c']))->toBe(['in.b.c' => 3])
+            ->and($ctx->paramsArray(['p', 'missing']))->toBe(['p' => 2, 'missing' => null])
+            ->and($ctx->errorsArray(['email', 'none']))->toBe(['email' => ['invalid'], 'none' => null])
+            ->and($ctx->resourcesArray(['obj.id', 'list.1', 'nope']))->toBe(['obj.id' => 9, 'list.1' => 1, 'nope' => null])
+            ->and($ctx->metaArray(['m', 'operation']))->toBe(['m' => true, 'operation' => ContextOperation::UPDATE->value])
+            ->and($ctx->internalOnlyArray(['secret', 'k']))->toBe(['secret' => 42, 'k' => null]);
+    });
+});
+
+describe('toCollection / toArray dotted-key lookups (snapshot-level)', function () {
+    it('returns a snapshot filtered by dotted keys (unknowns -> null)', function () {
+        $ctx = Context::makeWithDefaults(
+            ['in' => ['x' => 10]],
+            [
+                'params' => ['p' => 7],
+                'meta' => ['m' => true],
+                'resources' => ['box' => ['w' => ['h' => 5]]],
+                'errors' => ['code' => ['E_BAD']],
+                'internalOnly' => ['flag' => 'ok'],
+            ]
+        );
+
+        // Expect these dotted keys to be pulled from the snapshot produced by toCollection():
+        $keys = [
+            'input.in.x',
+            'params.p',
+            'meta.m',
+            'errors.code',
+            'resources.box.w.h',
+            'internalOnly.flag', // not directly present in snapshot, but we allow dotted lookup to null
+            'status',
+            'aborted',
+            'operation',
+            'missing.path',
+        ];
+
+        $snap = $ctx->toCollection($keys);
+        $arr = $ctx->toArray($keys);
+
+        expect($snap)->toBeInstanceOf(Collection::class)
+            ->and($arr)->toBe($snap->toArray())
+            ->and($arr)->toMatchArray([
+                'input.in.x' => 10,
+                'params.p' => 7,
+                'meta.m' => true,
+                'errors.code' => ['E_BAD'],
+                'resources.box.w.h' => 5,
+                'internalOnly.flag' => null, // not exposed in snapshot; should default to null
+                'status' => ContextStatus::INCOMPLETE->name,
+                'aborted' => false,
+                'operation' => ContextOperation::UPDATE->value,
+                'missing.path' => null,
+            ]);
     });
 });
